@@ -88,6 +88,9 @@ shortcuts:
   save_to: null
   delete_file: Ctrl+Delete
 
+  rotate: null
+  dataset: null
+
   open_next: [D, Ctrl+Shift+D]
   open_prev: [A, Ctrl+Shift+A]
 

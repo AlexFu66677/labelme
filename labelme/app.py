@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QFileDialog
+from PyQt5.Qt import QPixmap, QPoint, Qt, QPainter, QIcon
 import functools
 import html
 import math
@@ -26,6 +27,7 @@ from labelme.label_file import LabelFileError
 from labelme.logger import logger
 from labelme.shape import Shape
 from labelme.widgets import BrightnessContrastDialog
+from labelme.widgets import DatasetDialog
 from labelme.widgets import Canvas
 from labelme.widgets import FileDialogPreview
 from labelme.widgets import LabelDialog
@@ -226,6 +228,20 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["open"],
             "open",
             self.tr("Open image or label file"),
+        )
+        rotate = action(
+            self.tr("&Rotate"),
+            self.Rotate,
+            shortcuts["rotate"],
+            "rotate",
+            self.tr("rotate image"),
+        )
+        dataset = action(
+            self.tr("&dataset"),
+            self.Dataset,
+            shortcuts["dataset"],
+            "dataset",
+            self.tr("dataset"),
         )
         opendir = action(
             self.tr("&Open Dir"),
@@ -602,6 +618,8 @@ class MainWindow(QtWidgets.QMainWindow):
             save=save,
             saveAs=saveAs,
             open=open_,
+            rotate=rotate,
+            dataset=dataset,
             close=close,
             deleteFile=deleteFile,
             toggleKeepPrevMode=toggle_keep_prev_mode,
@@ -634,6 +652,7 @@ class MainWindow(QtWidgets.QMainWindow):
             openPrevImg=openPrevImg,
             fileMenuActions=(open_, opendir, save, saveAs, close, quit),
             tool=(),
+            left_tool=(),
             # XXX: need to add some actions here to activate the shortcut
             editMenu=(
                 edit,
@@ -770,6 +789,15 @@ class MainWindow(QtWidgets.QMainWindow):
         selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
 
         self.tools = self.toolbar("Tools")
+        self.lefttools = self.lefttoolbar("LeftTools")
+
+        self.actions.lefttool = (
+            rotate,
+            zoomIn,
+            zoomOut,
+            dataset
+        )
+
         self.actions.tool = (
             open_,
             opendir,
@@ -873,16 +901,34 @@ class MainWindow(QtWidgets.QMainWindow):
             utils.addActions(toolbar, actions)
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         return toolbar
+    def lefttoolbar(self, title, actions=None):
+        toolbar = ToolBar(title)
+        toolbar.setObjectName("%sLeftToolBar" % title)
+        # toolbar.setOrientation(Qt.Vertical)
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
 
+        # action1 = QAction("Action 1", self)
+        # action2 = QAction("Action 2", self)
+        # # 将动作添加到工具栏
+        # toolbar.addAction(action1)
+        # toolbar.addAction(action2)
+
+        if actions:
+            utils.addActions(toolbar, actions)
+        self.addToolBar(Qt.LeftToolBarArea, toolbar)
+        return toolbar
     # Support Functions
 
     def noShapes(self):
         return not len(self.labelList)
 
     def populateModeActions(self):
-        tool, menu = self.actions.tool, self.actions.menu
+        lefttool,tool, menu = self.actions.lefttool,self.actions.tool, self.actions.menu
+        self.lefttools.clear()
+        utils.addActions(self.lefttools, lefttool)
         self.tools.clear()
         utils.addActions(self.tools, tool)
+
         self.canvas.menus[0].clear()
         utils.addActions(self.canvas.menus[0], menu)
         self.menus.edit.clear()
@@ -1548,7 +1594,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.fileListWidget.setCurrentRow(self.imageList.index(filename))
             self.fileListWidget.repaint()
             return
-
         self.resetState()
         self.canvas.setEnabled(False)
         if filename is None:
@@ -1828,6 +1873,13 @@ class MainWindow(QtWidgets.QMainWindow):
             fileName = fileDialog.selectedFiles()[0]
             if fileName:
                 self.loadFile(fileName)
+
+    def Rotate(self, _value=False):
+        return
+    def Dataset(self, _value=False):
+        dialog = DatasetDialog()
+        dialog.exec_()
+
 
     def changeOutputDirDialog(self, _value=False):
         default_output_dir = self.output_dir
