@@ -8,6 +8,7 @@ import os
 import os.path as osp
 import re
 import webbrowser
+import shutil
 
 import imgviz
 import natsort
@@ -36,6 +37,7 @@ from labelme.widgets import LabelListWidgetItem
 from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
+from labelme.widgets import QCWidget
 
 # FIXME
 # - [medium] Set max zoom value to something big enough for FitWidth/Window
@@ -235,6 +237,22 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["rotate"],
             "rotate",
             self.tr("rotate image"),
+        )
+        image_pass = action(
+            self.tr("&Image_Pass"),
+            self.Image_pass,
+            shortcuts["image_pass"],
+            "image_pass",
+            self.tr("image pass"),
+            enabled=False,
+        )
+        image_unpass = action(
+            self.tr("&Image_Unpass"),
+            self.Image_unpass,
+            shortcuts["image_unpass"],
+            "image_unpass",
+            self.tr("image unpass"),
+            enabled=False,
         )
         dataset = action(
             self.tr("&dataset"),
@@ -480,6 +498,21 @@ class MainWindow(QtWidgets.QMainWindow):
             icon="help",
             tip=self.tr("Show tutorial page"),
         )
+        self.QCResult=QCWidget()
+        QCResult = QtWidgets.QWidgetAction(self)
+        QCResultBoxLayout = QtWidgets.QVBoxLayout()
+        QCResultBoxLayout.addWidget(self.QCResult)
+        QCResultLabel = QtWidgets.QLabel("QCResult")
+        QCResultLabel.setAlignment(Qt.AlignCenter)
+        QCResultLabel.setFont(QtGui.QFont(None, 10))
+        QCResultBoxLayout.addWidget(QCResultLabel)
+        QCResult.setDefaultWidget(QtWidgets.QWidget())
+        QCResult.defaultWidget().setLayout(QCResultBoxLayout)
+        # QCResult = QtWidgets.QWidgetAction(self)
+        # zoomBoxLayout = QtWidgets.QVBoxLayout()
+        # zoomBoxLayout.addWidget(self.zoomWidget)
+        # QCResultQtWidgets.QLabel("QCResult: ")
+        # # self.height_label = QtWidgets.QLabel("高度: ")
 
         zoom = QtWidgets.QWidgetAction(self)
         zoomBoxLayout = QtWidgets.QVBoxLayout()
@@ -619,6 +652,9 @@ class MainWindow(QtWidgets.QMainWindow):
             saveAs=saveAs,
             open=open_,
             rotate=rotate,
+            image_pass=image_pass,
+            image_unpass=image_unpass,
+            QCResult=QCResult,
             dataset=dataset,
             close=close,
             deleteFile=deleteFile,
@@ -795,7 +831,10 @@ class MainWindow(QtWidgets.QMainWindow):
             rotate,
             zoomIn,
             zoomOut,
-            dataset
+            dataset,
+            image_pass,
+            image_unpass,
+            QCResult,
         )
 
         self.actions.tool = (
@@ -1002,6 +1041,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.imageData = None
         self.labelFile = None
         self.otherData = None
+        self.imagePass = None
+        self.QCResult.setText(None)
         self.canvas.resetState()
 
     def currentItem(self):
@@ -1360,7 +1401,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setCheckState(Qt.Checked if flag else Qt.Unchecked)
             self.flag_widget.addItem(item)
 
-    def saveLabels(self, filename):
+    def saveLabels(self, filename,imagePass=None):
         lf = LabelFile()
 
         def format_shape(s):
@@ -1398,6 +1439,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 imageWidth=self.image.width(),
                 otherData=self.otherData,
                 flags=flags,
+                imagePass=imagePass,
             )
             self.labelFile = lf
             items = self.fileListWidget.findItems(
@@ -1635,6 +1677,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.labelFile.imagePath,
             )
             self.otherData = self.labelFile.otherData
+            data = self.labelFile.imagePass
+            self.QCResult.setText(str(data))
         else:
             self.imageData = LabelFile.load_image_file(filename)
             if self.imageData:
@@ -1876,6 +1920,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def Rotate(self, _value=False):
         return
+    def Image_pass(self, _value=False):
+        if not os.path.exists(self.lastOpenDir + '/image'):
+            os.makedirs(self.lastOpenDir + '/image')
+        if not os.path.exists(self.lastOpenDir + '/json'):
+            os.makedirs(self.lastOpenDir + '/json')
+        label_file = osp.splitext(self.filename)[0] + ".json"
+        label_outdir = osp.join(self.lastOpenDir + '/json', str(os.path.split(label_file)[1]))
+        image_outdir = osp.join(self.lastOpenDir + '/image', str(os.path.split(self.filename)[1]))
+        self.saveLabels(label_file,True)
+        if osp.exists(self.lastOpenDir + '/image'):
+            shutil.copyfile(self.filename,image_outdir)
+            shutil.copyfile(label_file,label_outdir)
+    def Image_unpass(self, _value=False):
+        label_file = osp.splitext(self.filename)[0] + ".json"
+        self.saveLabels(label_file, False)
     def Dataset(self, _value=False):
         dialog = DatasetDialog()
         dialog.exec_()
@@ -2162,7 +2221,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def importDirImages(self, dirpath, pattern=None, load=True):
         self.actions.openNextImg.setEnabled(True)
         self.actions.openPrevImg.setEnabled(True)
-
+        self.actions.image_pass.setEnabled(True)
+        self.actions.image_unpass.setEnabled(True)
         if not self.mayContinue() or not dirpath:
             return
 

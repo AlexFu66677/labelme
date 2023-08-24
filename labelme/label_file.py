@@ -40,6 +40,7 @@ class LabelFile(object):
         self.shapes = []
         self.imagePath = None
         self.imageData = None
+        self.imagePass = None
         if filename is not None:
             self.load(filename)
         self.filename = filename
@@ -76,6 +77,7 @@ class LabelFile(object):
             "flags",  # image level flags
             "imageHeight",
             "imageWidth",
+            "imagePass",
         ]
         shape_keys = [
             "label",
@@ -99,6 +101,7 @@ class LabelFile(object):
                 imageData = self.load_image_file(imagePath)
             flags = data.get("flags") or {}
             imagePath = data["imagePath"]
+            imagePass = data["imagePass"]
             self._check_image_height_and_width(
                 base64.b64encode(imageData).decode("utf-8"),
                 data.get("imageHeight"),
@@ -133,6 +136,7 @@ class LabelFile(object):
         self.imageData = imageData
         self.filename = filename
         self.otherData = otherData
+        self.imagePass = imagePass
 
     @staticmethod
     def _check_image_height_and_width(imageData, imageHeight, imageWidth):
@@ -161,6 +165,7 @@ class LabelFile(object):
         imageData=None,
         otherData=None,
         flags=None,
+        imagePass=None
     ):
         if imageData is not None:
             imageData = base64.b64encode(imageData).decode("utf-8")
@@ -171,6 +176,8 @@ class LabelFile(object):
             otherData = {}
         if flags is None:
             flags = {}
+        if imagePass is None:
+            imagePass = None
         data = dict(
             version=__version__,
             flags=flags,
@@ -179,6 +186,7 @@ class LabelFile(object):
             imageData=imageData,
             imageHeight=imageHeight,
             imageWidth=imageWidth,
+            imagePass=imagePass
         )
         for key, value in otherData.items():
             assert key not in data

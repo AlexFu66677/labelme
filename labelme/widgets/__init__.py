@@ -21,3 +21,4 @@ from .unique_label_qlist_widget import UniqueLabelQListWidget
 from .zoom_widget import ZoomWidget
 
 from .setdata import DatasetDialog
+from .QC_widget import QCWidget

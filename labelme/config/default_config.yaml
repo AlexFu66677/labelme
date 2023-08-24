@@ -90,6 +90,8 @@ shortcuts:
 
   rotate: null
   dataset: null
+  image_pass: null
+  image_unpass: null
 
   open_next: [D, Ctrl+Shift+D]
   open_prev: [A, Ctrl+Shift+A]
