@@ -1,11 +1,9 @@
 
-import argparse
 import glob
 import json
 import os
 import os.path as osp
 import shutil
-import xml.etree.ElementTree as ET
 
 import numpy as np
 import PIL.ImageDraw
@@ -153,11 +151,33 @@ def Generator(folder_data,value_data):
     json_input_dir=folder_data[0]
     image_input_dir=folder_data[1]
     output_dir=folder_data[2]
-    train_proportion=float(value_data[0])
-    val_proportion=float(value_data[1])
-    test_proportion=float(value_data[2])
+    if value_data[0]:
+      train_proportion=float(value_data[0])
+    else:
+        train_proportion=0
+    if value_data[1]:
+        test_proportion = float(value_data[1])
+    else:
+        test_proportion = 0
+    if value_data[2]:
+        val_proportion=float(value_data[2])
+    else:
+        val_proportion = 0
     dataset_type = 'labelme'
 
+    try:
+        assert os.path.exists(json_input_dir)
+    except AssertionError as e:
+        return 'The json folder does not exist!'
+    try:
+        assert os.path.exists(image_input_dir)
+    except AssertionError as e:
+        return 'The image folder does not exist!'
+    try:
+        assert abs(train_proportion + val_proportion \
+                    + test_proportion - 1.0) < 1e-5
+    except AssertionError as e:
+        return 'The sum of pqoportion of training, validation and test datase must be 1!'
     total_num = len(glob.glob(osp.join(json_input_dir, '*.json')))
     if train_proportion != 0:
         train_num = int(total_num * train_proportion)
@@ -234,7 +254,7 @@ def Generator(folder_data,value_data):
             open(test_json_path, 'w'),
             indent=4,
             cls=MyEncoder)
-        for i in range(len(res)):
-             res_str=res_str+'\n'+str(res[i])
+    for i in range(len(res)):
+        res_str=res_str+'\n'+str(res[i])
     return res_str
 # Generator('C:/Users/fjl\Desktop\data/anno','C:/Users/fjl/Desktop/data/img','C:/Users/fjl\Desktop\data',0.4,0.3,0.3)

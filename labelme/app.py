@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QFileDialog
-from PyQt5.Qt import QPixmap, QPoint, Qt, QPainter, QIcon
+# from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QFileDialog
+# from PyQt5.Qt import QPixmap, QPoint, Qt, QPainter, QIcon
 import functools
 import html
 import math

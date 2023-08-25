@@ -1,10 +1,5 @@
-import PIL.Image
-import PIL.ImageEnhance
-from qtpy.QtCore import Qt
-from qtpy import QtGui
+
 from qtpy import QtWidgets
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QFileDialog, \
-    QVBoxLayout, QComboBox,QHBoxLayout
 from .. import dataset
 
 
@@ -17,10 +12,10 @@ class DatasetDialog(QtWidgets.QDialog):
         self.folder_inputs = []
         self.value_labels = []
         self.value_inputs = []
-        layout = QVBoxLayout()
+        layout = QtWidgets.QtWidgetsQVBoxLayout()
         # 添加下拉选择控件
-        type_label = QLabel("Type:")
-        type_combobox = QComboBox()
+        type_label = QtWidgets.QLabel("Type:")
+        type_combobox = QtWidgets.QComboBox()
         type_combobox.addItem("coco")
         type_combobox.addItem("voc")
         type_combobox.addItem("citysapce")
@@ -30,16 +25,16 @@ class DatasetDialog(QtWidgets.QDialog):
 
         folder_names = ["json_input", "image_input", "output"]
         for i in range(3):
-            folder_label = QLabel(f"{folder_names[i]}:")
-            folder_input = QLineEdit()
+            folder_label = QtWidgets.QLabel(f"{folder_names[i]}:")
+            folder_input = QtWidgets.QLineEdit()
             folder_input.setReadOnly(True)
-            folder_button = QPushButton("Select")
+            folder_button = QtWidgets.QPushButton("Select")
             folder_button.clicked.connect(lambda _, index=i: self.select_folder(index))
 
             self.folder_labels.append(folder_label)
             self.folder_inputs.append(folder_input)
 
-            folder_layout = QHBoxLayout()
+            folder_layout = QtWidgets.QHBoxLayout()
             folder_layout.addWidget(folder_input)
             folder_layout.addWidget(folder_button)
 
@@ -48,15 +43,15 @@ class DatasetDialog(QtWidgets.QDialog):
 
         # 添加数值输入控件
         value_names = ["train", "test", "val"]
-        value_layout = QHBoxLayout()
+        value_layout = QtWidgets.QHBoxLayout()
         for i in range(3):
-            value_label = QLabel(f"{value_names[i]}:")
-            value_input = QLineEdit()
+            value_label = QtWidgets.QLabel(f"{value_names[i]}:")
+            value_input = QtWidgets.QLineEdit()
 
             self.value_labels.append(value_label)
             self.value_inputs.append(value_input)
 
-            value_sub_layout = QVBoxLayout()
+            value_sub_layout = QtWidgets.QVBoxLayout()
             value_sub_layout.addWidget(value_label)
             value_sub_layout.addWidget(value_input)
 
@@ -64,14 +59,14 @@ class DatasetDialog(QtWidgets.QDialog):
 
         layout.addLayout(value_layout)
 
-        self.result_label = QLabel("Result:")
+        self.result_label = QtWidgets.QLabel("Result:")
         self.result_text_edit = QtWidgets.QTextEdit()
         self.result_text_edit.setReadOnly(True)
 
         layout.addWidget(self.result_label)
         layout.addWidget(self.result_text_edit)
 
-        start_button = QPushButton("Start")
+        start_button = QtWidgets.QPushButton("Start")
         start_button.clicked.connect(self.start)
 
         layout.addWidget(start_button)
@@ -79,7 +74,7 @@ class DatasetDialog(QtWidgets.QDialog):
         self.setLayout(layout)
 
     def select_folder(self, index):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             self.folder_inputs[index].setText(folder)
     def start(self):
