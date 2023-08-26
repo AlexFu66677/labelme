@@ -901,10 +901,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = QtCore.QSettings("labelme", "labelme")
         self.recentFiles = self.settings.value("recentFiles", []) or []
         size = self.settings.value("window/size", QtCore.QSize(600, 500))
-        position = self.settings.value("window/position", QtCore.QPoint(0, 0))
+        # position = self.settings.value("window/position", QtCore.QPoint(0, 0))
         state = self.settings.value("window/state", QtCore.QByteArray())
         self.resize(size)
-        self.move(position)
+        # self.move(position)
+        self.center()
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
         self.restoreState(state)
@@ -960,6 +961,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def noShapes(self):
         return not len(self.labelList)
+
+    def center(self):
+        screen = QtWidgets.QDesktopWidget().availableGeometry()
+        window_size = self.geometry()
+        x = (screen.width() - window_size.width()) // 2
+        y = (screen.height() - window_size.height()) // 2
+        self.move(x, y)
 
     def populateModeActions(self):
         lefttool,tool, menu = self.actions.lefttool,self.actions.tool, self.actions.menu

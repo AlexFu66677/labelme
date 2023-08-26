@@ -4,7 +4,7 @@ import json
 import os
 import os.path as osp
 import shutil
-
+import random
 import numpy as np
 import PIL.ImageDraw
 from tqdm import tqdm
@@ -109,7 +109,7 @@ def deal_json(res,ds_type, img_path, json_path):
                 -1] not in ['bmp', 'jpg', 'jpeg', 'png', 'JPEG', 'JPG', 'PNG']:
             continue
         label_file = osp.join(json_path, img_label + '.json')
-        res.append(('Generating dataset from:', label_file))
+        res.append(('Generating dataset from:' + label_file))
         image_num = image_num + 1
         with open(label_file) as f:
             data = json.load(f)
@@ -144,7 +144,7 @@ def deal_json(res,ds_type, img_path, json_path):
     data_coco['annotations'] = annotations_list
     return data_coco
 
-def Generator(folder_data,value_data):
+def CocoGenerator(folder_data,value_data):
 
     res=[]
     res_str = ""
@@ -202,7 +202,13 @@ def Generator(folder_data,value_data):
         if test_proportion != 0.0 and not os.path.exists(test_out_dir):
             os.makedirs(test_out_dir)
     count = 1
-    for img_name in os.listdir(image_input_dir):
+    img_names=[]
+    for file in os.listdir(image_input_dir):
+        if os.path.isfile(os.path.join(image_input_dir, file)):
+            img_names.append(str(file))
+    random.shuffle(img_names)
+
+    for img_name in img_names:
         if count <= train_num:
             if osp.exists(output_dir + '/train/'):
                 shutil.copyfile(

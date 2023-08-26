@@ -12,16 +12,16 @@ class DatasetDialog(QtWidgets.QDialog):
         self.folder_inputs = []
         self.value_labels = []
         self.value_inputs = []
-        layout = QtWidgets.QtWidgetsQVBoxLayout()
+        layout =QtWidgets.QVBoxLayout()
         # 添加下拉选择控件
         type_label = QtWidgets.QLabel("Type:")
-        type_combobox = QtWidgets.QComboBox()
-        type_combobox.addItem("coco")
-        type_combobox.addItem("voc")
-        type_combobox.addItem("citysapce")
+        self.type_combobox = QtWidgets.QComboBox()
+        self.type_combobox.addItem("coco")
+        self.type_combobox.addItem("voc")
+        self.type_combobox.addItem("yolo")
 
         layout.addWidget(type_label)
-        layout.addWidget(type_combobox)
+        layout.addWidget(self.type_combobox)
 
         folder_names = ["json_input", "image_input", "output"]
         for i in range(3):
@@ -80,7 +80,13 @@ class DatasetDialog(QtWidgets.QDialog):
     def start(self):
         folder_data = [folder_input.text() for folder_input in self.folder_inputs]
         value_data = [value_input.text() for value_input in self.value_inputs]
-        result = dataset.Generator(folder_data,value_data)
+        type_data = self.type_combobox.currentText()
+        if type_data=='coco':
+           result = dataset.CocoGenerator(folder_data, value_data)
+        elif type_data=='yolo':
+           result =dataset.YoloGenerator(folder_data, value_data)
+        elif type_data == 'voc':
+           result = dataset.VocGenerator(folder_data, value_data)
         #键值对
         # folder_data=['C:/Users/fjl\Desktop\data/anno', 'C:/Users/fjl/Desktop/data/img', 'C:/Users/fjl\Desktop\data']
         # value_data=[0.4,0.3,0.3]
