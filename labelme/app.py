@@ -901,10 +901,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = QtCore.QSettings("labelme", "labelme")
         self.recentFiles = self.settings.value("recentFiles", []) or []
         size = self.settings.value("window/size", QtCore.QSize(600, 500))
-        # position = self.settings.value("window/position", QtCore.QPoint(0, 0))
+        position = self.settings.value("window/position", QtCore.QPoint(0, 0))
         state = self.settings.value("window/state", QtCore.QByteArray())
         self.resize(size)
-        # self.move(position)
+        self.move(position)
         self.center()
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
