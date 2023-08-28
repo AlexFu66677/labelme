@@ -178,6 +178,12 @@ def CocoGenerator(folder_data,value_data):
                     + test_proportion - 1.0) < 1e-5
     except AssertionError as e:
         return 'The sum of pqoportion of training, validation and test datase must be 1!'
+
+    folder_list = [output_dir + '/train', output_dir + '/val', output_dir + '/test', output_dir + '/annotations']
+    for folder in folder_list:
+        if os.path.exists(folder):
+            return "The directory is already exist, please remove the directory first"
+
     total_num = len(glob.glob(osp.join(json_input_dir, '*.json')))
     if train_proportion != 0:
         train_num = int(total_num * train_proportion)
@@ -263,4 +269,9 @@ def CocoGenerator(folder_data,value_data):
     for i in range(len(res)):
         res_str=res_str+'\n'+str(res[i])
     return res_str
-# Generator('C:/Users/fjl\Desktop\data/anno','C:/Users/fjl/Desktop/data/img','C:/Users/fjl\Desktop\data',0.4,0.3,0.3)
+
+# folder_data = ['C:/Users/fjl\Desktop/11\json', 'C:/Users/fjl\Desktop/11\image', 'C:/Users/fjl/Desktop/11/coco']
+# value_data = [0.6, 0.2, 0.2]
+# result = CocoGenerator(folder_data, value_data)
+# print(result)
+# print(len(result))
