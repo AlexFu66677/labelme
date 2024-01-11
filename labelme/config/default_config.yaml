@@ -87,7 +87,8 @@ shortcuts:
   save_as: Ctrl+Shift+S
   save_to: null
   delete_file: Ctrl+Delete
-
+  select_onnx: null
+  object: null
   rotate: null
   dataset: null
   image_pass: null

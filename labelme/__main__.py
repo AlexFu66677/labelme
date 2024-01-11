@@ -15,8 +15,9 @@ from labelme.app import MainWindow
 from labelme.config import get_config
 from labelme.logger import logger
 from labelme.utils import newIcon
-
-
+from qt_material import apply_stylesheet
+from qdarkstyle.light.palette import LightPalette
+import qdarkstyle
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -175,6 +176,11 @@ def main():
         output_file=output_file,
         output_dir=output_dir,
     )
+
+
+    # apply_stylesheet(app, theme='dark_teal.xml')
+    # app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+    app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api='pyqt5', palette=LightPalette()))
 
     if reset_config:
         logger.info("Resetting Qt config: %s" % win.settings.fileName())

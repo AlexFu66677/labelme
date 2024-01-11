@@ -9,6 +9,10 @@ import os.path as osp
 import re
 import webbrowser
 import shutil
+import cv2
+import onnxruntime as ort
+import numpy as np
+import labelme.utils
 
 import imgviz
 import natsort
@@ -16,7 +20,8 @@ from qtpy import QtCore
 from qtpy.QtCore import Qt
 from qtpy import QtGui
 from qtpy import QtWidgets
-
+from PyQt5.Qt import Qt
+from PyQt5.QtWidgets import *
 from labelme import __appname__
 from labelme import PY2
 
@@ -38,6 +43,8 @@ from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
 from labelme.widgets import QCWidget
+from labelme.widgets import Selectonnx
+from qt_material import apply_stylesheet
 
 # FIXME
 # - [medium] Set max zoom value to something big enough for FitWidth/Window
@@ -237,6 +244,20 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["rotate"],
             "rotate",
             self.tr("rotate image"),
+        )
+        select_onnx = action(
+            self.tr("&Select_onnx"),
+            self.select_onnx,
+            shortcuts["select_onnx"],
+            "select_onnx",
+            self.tr("select_onnx model"),
+        )
+        object = action(
+            self.tr("&Object"),
+            self.object_detection,
+            shortcuts["object"],
+            "object",
+            self.tr("object detection"),
         )
         image_pass = action(
             self.tr("&Image_Pass"),
@@ -556,7 +577,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         zoomOrg = action(
             self.tr("&Original size"),
-            functools.partial(self.setZoom, 100),
+            functools.partial(self.setZoom, 150),
             shortcuts["zoom_to_original"],
             "zoom",
             self.tr("Zoom to original size"),
@@ -652,6 +673,8 @@ class MainWindow(QtWidgets.QMainWindow):
             saveAs=saveAs,
             open=open_,
             rotate=rotate,
+            select_onnx=select_onnx,
+            object=object,
             image_pass=image_pass,
             image_unpass=image_unpass,
             QCResult=QCResult,
@@ -828,6 +851,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lefttools = self.lefttoolbar("LeftTools")
 
         self.actions.lefttool = (
+            select_onnx,
+            object,
             rotate,
             zoomIn,
             zoomOut,
@@ -903,13 +928,18 @@ class MainWindow(QtWidgets.QMainWindow):
         size = self.settings.value("window/size", QtCore.QSize(600, 500))
         position = self.settings.value("window/position", QtCore.QPoint(0, 0))
         state = self.settings.value("window/state", QtCore.QByteArray())
+
+        # self.setWindowFlag(Qt.FramelessWindowHint)  # 取消边框
+        # self.setAttribute(Qt.WA_TranslucentBackground)
+
+
         self.resize(size)
         self.move(position)
         self.center()
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
         self.restoreState(state)
-
+        self.onnx_path=''
         # Populate the File menu dynamically.
         self.updateFileMenu()
         # Since loading the file may take some time,
@@ -1466,6 +1496,63 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return False
 
+    def save_AI_Labels(self, filename, res, imagePass=None):
+        lf = LabelFile()
+
+        def format_shape(s):
+            doc = {}
+            doc[0] = 'people'
+            doc[1] = 'car'
+            data=dict(
+                label= doc[s[0]],
+                points=[(p[0], p[1]) for p in s[1:5]],
+                group_id= None,
+                description="",
+                shape_type="rectangle",
+                flags={},
+                )
+            return data
+
+        shapes = [format_shape(item) for item in res]
+        flags = {}
+        for i in range(self.flag_widget.count()):
+            item = self.flag_widget.item(i)
+            key = item.text()
+            flag = item.checkState() == Qt.Checked
+            flags[key] = flag
+        try:
+            imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
+            imageData = self.imageData if self._config["store_data"] else None
+            if osp.dirname(filename) and not osp.exists(osp.dirname(filename)):
+                os.makedirs(osp.dirname(filename))
+            lf.save(
+                filename=filename,
+                shapes=shapes,
+                imagePath=imagePath,
+                imageData=imageData,
+                imageHeight=self.image.height(),
+                imageWidth=self.image.width(),
+                otherData=self.otherData,
+                flags=flags,
+                imagePass=imagePass,
+            )
+            self.labelFile = lf
+            items = self.fileListWidget.findItems(
+                self.imagePath, Qt.MatchExactly
+            )
+            if len(items) > 0:
+                if len(items) != 1:
+                    raise RuntimeError("There are duplicate files.")
+                items[0].setCheckState(Qt.Checked)
+            # disable allows next and previous image to proceed
+            # self.filename = filename
+            return True
+        except LabelFileError as e:
+            self.errorMessage(
+                self.tr("Error saving label data"), self.tr("<b>%s</b>") % e
+            )
+            return False
+
     def duplicateSelectedShape(self):
         added_shapes = self.canvas.duplicateSelectedShapes()
         self.labelList.clearSelection()
@@ -1928,6 +2015,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def Rotate(self, _value=False):
         return
+    def select_onnx(self, _value=False):
+        dialog = Selectonnx()
+        dialog.exec_()
+        self.onnx_path=dialog.file_path
+    def object_detection(self, _value=False):
+
+        image = labelme.utils.img_qt_to_arr(self.image)
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        net = ort.InferenceSession(self.onnx_path, so)
+        img = cv2.resize(image, (640, 640), interpolation=cv2.INTER_AREA)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img.astype(np.float32)
+        blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
+        inputs = {net.get_inputs()[0].name: blob, "scale_factor": np.ones(shape=[1, 2], dtype='float32')}
+        outs = net.run(None, inputs)[0]
+        polygon=[]
+        for detection in outs:
+            class_id, score, xmin, ymin, xmax, ymax = detection
+                # 根据分数阈值进行过滤
+            if score < 0.3:
+                continue
+            xmin=int(xmin / 640 * self.image.width())
+            ymin=int(ymin / 640 * self.image.height())
+            xmax=int(xmax / 640 * self.image.width())
+            ymax=int(ymax / 640 * self.image.height())
+            points0=[xmin, ymin]
+            points1=[xmax, ymax]
+            polygon.append([class_id,points0, points1])
+        label_file = osp.splitext(self.imagePath)[0] + ".json"
+        if self.output_dir:
+            label_file_without_path = osp.basename(label_file)
+            label_file = osp.join(self.output_dir, label_file_without_path)
+        self.save_AI_Labels(label_file,polygon)
+        self.loadFile(self.filename)
+
     def Image_pass(self, _value=False):
         if not os.path.exists(self.lastOpenDir + '/image'):
             os.makedirs(self.lastOpenDir + '/image')
