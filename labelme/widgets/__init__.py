@@ -23,3 +23,5 @@ from .zoom_widget import ZoomWidget
 from .dataset_dialog import DatasetDialog
 from .QC_widget import QCWidget
 from .select_onnx_dialog import Selectonnx
+from .slice_dataset_dialog import Slice_dataset
+from .concat_dataset_dialog import Concat_dataset

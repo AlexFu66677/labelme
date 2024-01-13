@@ -180,7 +180,7 @@ def main():
 
     # apply_stylesheet(app, theme='dark_teal.xml')
     # app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
-    app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api='pyqt5', palette=LightPalette()))
+    # app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api='pyqt5', palette=LightPalette()))
 
     if reset_config:
         logger.info("Resetting Qt config: %s" % win.settings.fileName())

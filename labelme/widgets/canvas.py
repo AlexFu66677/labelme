@@ -334,7 +334,7 @@ class Canvas(QtWidgets.QWidget):
         # - Highlight shapes
         # - Highlight vertex
         # Update shape/vertex fill and tooltip value accordingly.
-        self.setToolTip(self.tr("Image"))
+        self.setToolTip(self.tr("图像"))
         for shape in reversed([s for s in self.shapes if self.isVisible(s)]):
             # Look for a nearby vertex to highlight. If that fails,
             # check if we happen to be inside a shape.
@@ -349,7 +349,7 @@ class Canvas(QtWidgets.QWidget):
                 self.hEdge = None
                 shape.highlightVertex(index, shape.MOVE_VERTEX)
                 self.overrideCursor(CURSOR_POINT)
-                self.setToolTip(self.tr("Click & drag to move point"))
+                self.setToolTip(self.tr("点击并拖拽以移动控制点"))
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -361,7 +361,7 @@ class Canvas(QtWidgets.QWidget):
                 self.prevhShape = self.hShape = shape
                 self.prevhEdge = self.hEdge = index_edge
                 self.overrideCursor(CURSOR_POINT)
-                self.setToolTip(self.tr("Click to create point"))
+                self.setToolTip(self.tr("点击并创建控制点"))
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -679,6 +679,13 @@ class Canvas(QtWidgets.QWidget):
             self.shapes.remove(shape)
         self.storeShapes()
         self.update()
+
+    def deleteallShape(self):
+        deleted_shapes = list(self.shapes)
+        self.shapes.clear()
+        self.storeShapes()
+        self.update()
+        return deleted_shapes
 
     def duplicateSelectedShapes(self):
         if self.selectedShapes:

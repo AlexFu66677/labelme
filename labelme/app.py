@@ -10,6 +10,8 @@ import re
 import webbrowser
 import shutil
 import cv2
+import PIL.Image
+import PIL.ImageEnhance
 import onnxruntime as ort
 import numpy as np
 import labelme.utils
@@ -44,6 +46,8 @@ from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
 from labelme.widgets import QCWidget
 from labelme.widgets import Selectonnx
+from labelme.widgets import Slice_dataset
+from labelme.widgets import Concat_dataset
 from qt_material import apply_stylesheet
 
 # FIXME
@@ -124,7 +128,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lastOpenDir = None
 
         self.flag_dock = self.flag_widget = None
-        self.flag_dock = QtWidgets.QDockWidget(self.tr("Flags"), self)
+        self.flag_dock = QtWidgets.QDockWidget(self.tr("标记"), self)
         self.flag_dock.setObjectName("Flags")
         self.flag_widget = QtWidgets.QListWidget()
         if config["flags"]:
@@ -137,7 +141,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.labelList.itemChanged.connect(self.labelItemChanged)
         self.labelList.itemDropped.connect(self.labelOrderChanged)
         self.shape_dock = QtWidgets.QDockWidget(
-            self.tr("Polygon Labels"), self
+            self.tr("多边形标签"), self
         )
         self.shape_dock.setObjectName("Labels")
         self.shape_dock.setWidget(self.labelList)
@@ -145,8 +149,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.uniqLabelList = UniqueLabelQListWidget()
         self.uniqLabelList.setToolTip(
             self.tr(
-                "Select label to start annotating for it. "
-                "Press 'Esc' to deselect."
+                "选择标签类型并开始以其标注 "
+                "按 'Esc' 取消选择."
             )
         )
         if self._config["labels"]:
@@ -155,12 +159,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.uniqLabelList.addItem(item)
                 rgb = self._get_rgb_by_label(label)
                 self.uniqLabelList.setItemLabel(item, label, rgb)
-        self.label_dock = QtWidgets.QDockWidget(self.tr("Label List"), self)
-        self.label_dock.setObjectName("Label List")
+        self.label_dock = QtWidgets.QDockWidget(self.tr("标签列表"), self)
+        self.label_dock.setObjectName("标签列表")
         self.label_dock.setWidget(self.uniqLabelList)
 
         self.fileSearch = QtWidgets.QLineEdit()
-        self.fileSearch.setPlaceholderText(self.tr("Search Filename"))
+        self.fileSearch.setPlaceholderText(self.tr("按文件名检索"))
         self.fileSearch.textChanged.connect(self.fileSearchChanged)
         self.fileListWidget = QtWidgets.QListWidget()
         self.fileListWidget.itemSelectionChanged.connect(
@@ -171,8 +175,8 @@ class MainWindow(QtWidgets.QMainWindow):
         fileListLayout.setSpacing(0)
         fileListLayout.addWidget(self.fileSearch)
         fileListLayout.addWidget(self.fileListWidget)
-        self.file_dock = QtWidgets.QDockWidget(self.tr("File List"), self)
-        self.file_dock.setObjectName("Files")
+        self.file_dock = QtWidgets.QDockWidget(self.tr("文件列表"), self)
+        self.file_dock.setObjectName("文件列表")
         fileListWidget = QtWidgets.QWidget()
         fileListWidget.setLayout(fileListLayout)
         self.file_dock.setWidget(fileListWidget)
@@ -203,6 +207,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.drawingPolygon.connect(self.toggleDrawingSensitive)
 
         self.setCentralWidget(scrollArea)
+        self.rotate_state=0
 
         features = QtWidgets.QDockWidget.DockWidgetFeatures()
         for dock in ["flag_dock", "label_dock", "shape_dock", "file_dock"]:
@@ -225,125 +230,142 @@ class MainWindow(QtWidgets.QMainWindow):
         action = functools.partial(utils.newAction, self)
         shortcuts = self._config["shortcuts"]
         quit = action(
-            self.tr("&Quit"),
+            self.tr("&退出"),
             self.close,
             shortcuts["quit"],
             "quit",
             self.tr("Quit application"),
         )
         open_ = action(
-            self.tr("&Open"),
+            self.tr("&打开"),
             self.openFile,
             shortcuts["open"],
             "open",
-            self.tr("Open image or label file"),
+            self.tr("打开图像或标签文件"),
         )
         rotate = action(
-            self.tr("&Rotate"),
+            self.tr("&旋转"),
             self.Rotate,
             shortcuts["rotate"],
             "rotate",
-            self.tr("rotate image"),
+            self.tr("图像旋转"),
+            enabled=False,
         )
         select_onnx = action(
-            self.tr("&Select_onnx"),
+            self.tr("&选择模型"),
             self.select_onnx,
             shortcuts["select_onnx"],
             "select_onnx",
-            self.tr("select_onnx model"),
+            self.tr("选择模型"),
+            enabled=False,
         )
         object = action(
-            self.tr("&Object"),
+            self.tr("&目标检测"),
             self.object_detection,
             shortcuts["object"],
             "object",
-            self.tr("object detection"),
+            self.tr("目标检测"),
+            enabled=False,
         )
         image_pass = action(
-            self.tr("&Image_Pass"),
+            self.tr("&复核通过"),
             self.Image_pass,
             shortcuts["image_pass"],
             "image_pass",
-            self.tr("image pass"),
+            self.tr("复核通过"),
             enabled=False,
         )
         image_unpass = action(
-            self.tr("&Image_Unpass"),
+            self.tr("&复核不通过"),
             self.Image_unpass,
             shortcuts["image_unpass"],
             "image_unpass",
-            self.tr("image unpass"),
+            self.tr("复核不通过"),
             enabled=False,
         )
         dataset = action(
-            self.tr("&dataset"),
+            self.tr("&数据集生成"),
             self.Dataset,
             shortcuts["dataset"],
             "dataset",
-            self.tr("dataset"),
+            self.tr("数据集生成"),
+        )
+        slice_dataset = action(
+            self.tr("&数据集分割"),
+            self.Slice_Dataset,
+            shortcuts["dataset"],
+            "slice",
+            self.tr("数据分割"),
+        )
+        concat_dataset = action(
+            self.tr("&数据集合并"),
+            self.Concat_Dataset,
+            shortcuts["dataset"],
+            "concat",
+            self.tr("数据合并"),
         )
         opendir = action(
-            self.tr("&Open Dir"),
+            self.tr("&打开目录"),
             self.openDirDialog,
             shortcuts["open_dir"],
             "open",
-            self.tr("Open Dir"),
+            self.tr("打开目录"),
         )
         openNextImg = action(
-            self.tr("&Next Image"),
+            self.tr("&下一幅"),
             self.openNextImg,
             shortcuts["open_next"],
             "next",
-            self.tr("Open next (hold Ctl+Shift to copy labels)"),
+            self.tr("打开下一幅 (按Ctl+Shift拷贝标签)"),
             enabled=False,
         )
         openPrevImg = action(
-            self.tr("&Prev Image"),
+            self.tr("&上一幅"),
             self.openPrevImg,
             shortcuts["open_prev"],
             "prev",
-            self.tr("Open prev (hold Ctl+Shift to copy labels)"),
+            self.tr("打开上一幅 (按Ctl+Shift拷贝标签)"),
             enabled=False,
         )
         save = action(
-            self.tr("&Save"),
+            self.tr("&保存"),
             self.saveFile,
             shortcuts["save"],
             "save",
-            self.tr("Save labels to file"),
+            self.tr("保存标签到文件"),
             enabled=False,
         )
         saveAs = action(
-            self.tr("&Save As"),
+            self.tr("&另存为"),
             self.saveFileAs,
             shortcuts["save_as"],
             "save-as",
-            self.tr("Save labels to a different file"),
+            self.tr("保存标签到不同的文件"),
             enabled=False,
         )
 
         deleteFile = action(
-            self.tr("&Delete File"),
+            self.tr("&删除"),
             self.deleteFile,
             shortcuts["delete_file"],
             "delete",
-            self.tr("Delete current label file"),
+            self.tr("删除当前标签文件"),
             enabled=False,
         )
 
         changeOutputDir = action(
-            self.tr("&Change Output Dir"),
+            self.tr("&更改输出路径"),
             slot=self.changeOutputDirDialog,
             shortcut=shortcuts["save_to"],
             icon="open",
-            tip=self.tr("Change where annotations are loaded/saved"),
+            tip=self.tr("更改载入、保存标注的路径"),
         )
 
         saveAuto = action(
-            text=self.tr("Save &Automatically"),
+            text=self.tr("自动保存"),
             slot=lambda x: self.actions.saveAuto.setChecked(x),
             icon="save",
-            tip=self.tr("Save automatically"),
+            tip=self.tr("自动保存"),
             checkable=True,
             enabled=True,
         )
@@ -358,172 +380,165 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         close = action(
-            "&Close",
+            "&关闭",
             self.closeFile,
             shortcuts["close"],
             "close",
-            "Close current file",
+            "关闭当前文件",
         )
 
         toggle_keep_prev_mode = action(
-            self.tr("Keep Previous Annotation"),
+            self.tr("保留最后的标注"),
             self.toggleKeepPrevMode,
             shortcuts["toggle_keep_prev_mode"],
             None,
-            self.tr('Toggle "keep pevious annotation" mode'),
+            self.tr('开关“保留最后的标注”模式'),
             checkable=True,
         )
         toggle_keep_prev_mode.setChecked(self._config["keep_prev"])
 
         createMode = action(
-            self.tr("Create Polygons"),
+            self.tr("创建多边形"),
             lambda: self.toggleDrawMode(False, createMode="polygon"),
             shortcuts["create_polygon"],
             "objects",
-            self.tr("Start drawing polygons"),
+            self.tr("开始绘制多边形"),
             enabled=False,
         )
         createRectangleMode = action(
-            self.tr("Create Rectangle"),
+            self.tr("创建矩形"),
             lambda: self.toggleDrawMode(False, createMode="rectangle"),
             shortcuts["create_rectangle"],
             "objects",
-            self.tr("Start drawing rectangles"),
+            self.tr("开始绘制矩形"),
             enabled=False,
         )
         createCircleMode = action(
-            self.tr("Create Circle"),
+            self.tr("创建圆形"),
             lambda: self.toggleDrawMode(False, createMode="circle"),
             shortcuts["create_circle"],
             "objects",
-            self.tr("Start drawing circles"),
+            self.tr("开始绘制圆形"),
             enabled=False,
         )
         createLineMode = action(
-            self.tr("Create Line"),
+            self.tr("创建直线"),
             lambda: self.toggleDrawMode(False, createMode="line"),
             shortcuts["create_line"],
             "objects",
-            self.tr("Start drawing lines"),
+            self.tr("开始创建直线"),
             enabled=False,
         )
         createPointMode = action(
-            self.tr("Create Point"),
+            self.tr("创建控制点"),
             lambda: self.toggleDrawMode(False, createMode="point"),
             shortcuts["create_point"],
             "objects",
-            self.tr("Start drawing points"),
+            self.tr("开始绘制控制点"),
             enabled=False,
         )
         createLineStripMode = action(
-            self.tr("Create LineStrip"),
+            self.tr("创建折线"),
             lambda: self.toggleDrawMode(False, createMode="linestrip"),
             shortcuts["create_linestrip"],
             "objects",
-            self.tr("Start drawing linestrip. Ctrl+LeftClick ends creation."),
+            self.tr("开始绘制折线。Ctrl+单击左键结束绘制。"),
             enabled=False,
         )
         createAiPolygonMode = action(
-            self.tr("Create AI-Polygon"),
+            self.tr("智能分割"),
             lambda: self.toggleDrawMode(False, createMode="ai_polygon"),
             None,
             "objects",
-            self.tr("Start drawing ai_polygon. Ctrl+LeftClick ends creation."),
+            self.tr("开始只能分割。Ctrl+单击左键结束绘制。"),
             enabled=False,
         )
         editMode = action(
-            self.tr("Edit Polygons"),
+            self.tr("编辑多边形"),
             self.setEditMode,
             shortcuts["edit_polygon"],
             "edit",
-            self.tr("Move and edit the selected polygons"),
+            self.tr("移动、编辑选中的多边形"),
             enabled=False,
         )
 
         delete = action(
-            self.tr("Delete Polygons"),
+            self.tr("删除多边形"),
             self.deleteSelectedShape,
             shortcuts["delete_polygon"],
             "cancel",
-            self.tr("Delete the selected polygons"),
+            self.tr("删除选中的多边形"),
             enabled=False,
         )
         duplicate = action(
-            self.tr("Duplicate Polygons"),
+            self.tr("复制多边形"),
             self.duplicateSelectedShape,
             shortcuts["duplicate_polygon"],
             "copy",
-            self.tr("Create a duplicate of the selected polygons"),
+            self.tr("为选中的多边形创建副本"),
             enabled=False,
         )
         copy = action(
-            self.tr("Copy Polygons"),
+            self.tr("拷贝多边形"),
             self.copySelectedShape,
             shortcuts["copy_polygon"],
             "copy_clipboard",
-            self.tr("Copy selected polygons to clipboard"),
+            self.tr("拷贝选择的多边形"),
             enabled=False,
         )
         paste = action(
-            self.tr("Paste Polygons"),
+            self.tr("粘贴多边形"),
             self.pasteSelectedShape,
             shortcuts["paste_polygon"],
             "paste",
-            self.tr("Paste copied polygons"),
+            self.tr("粘贴选择的多边形"),
             enabled=False,
         )
         undoLastPoint = action(
-            self.tr("Undo last point"),
+            self.tr("撤销最后的控制点"),
             self.canvas.undoLastPoint,
             shortcuts["undo_last_point"],
             "undo",
-            self.tr("Undo last drawn point"),
+            self.tr("撤销最后一次绘制的控制点"),
             enabled=False,
         )
         removePoint = action(
-            text="Remove Selected Point",
+            text="删除选择的边界点",
             slot=self.removeSelectedPoint,
             shortcut=shortcuts["remove_selected_point"],
             icon="edit",
-            tip="Remove selected point from polygon",
+            tip="从多边形中删除选择的边界点",
             enabled=False,
         )
 
         undo = action(
-            self.tr("Undo"),
+            self.tr("撤销"),
             self.undoShapeEdit,
             shortcuts["undo"],
             "undo",
-            self.tr("Undo last add and edit of shape"),
+            self.tr("撤销最近一次添加和编辑"),
             enabled=False,
         )
 
         hideAll = action(
-            self.tr("&Hide\nPolygons"),
+            self.tr("&隐藏多边形"),
             functools.partial(self.togglePolygons, False),
             icon="eye",
-            tip=self.tr("Hide all polygons"),
+            tip=self.tr("隐藏多边形"),
             enabled=False,
         )
         showAll = action(
-            self.tr("&Show\nPolygons"),
+            self.tr("&显示多边形"),
             functools.partial(self.togglePolygons, True),
             icon="eye",
-            tip=self.tr("Show all polygons"),
+            tip=self.tr("显示多边形"),
             enabled=False,
-        )
-
-        help = action(
-            self.tr("&Tutorial"),
-            self.tutorial,
-            icon="help",
-            tip=self.tr("Show tutorial page"),
         )
         self.QCResult=QCWidget()
         QCResult = QtWidgets.QWidgetAction(self)
         QCResultBoxLayout = QtWidgets.QVBoxLayout()
         QCResultBoxLayout.addWidget(self.QCResult)
-        QCResultLabel = QtWidgets.QLabel("QCResult")
+        QCResultLabel = QtWidgets.QLabel("复核结果")
         QCResultLabel.setAlignment(Qt.AlignCenter)
         QCResultLabel.setFont(QtGui.QFont(None, 10))
         QCResultBoxLayout.addWidget(QCResultLabel)
@@ -547,8 +562,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.zoomWidget.setWhatsThis(
             str(
                 self.tr(
-                    "Zoom in or out of the image. Also accessible with "
-                    "{} and {} from the canvas."
+                    "缩放图像。亦可从画布的{}和{}访问"
                 )
             ).format(
                 utils.fmtShortcut(
@@ -560,61 +574,61 @@ class MainWindow(QtWidgets.QMainWindow):
         self.zoomWidget.setEnabled(False)
 
         zoomIn = action(
-            self.tr("Zoom &In"),
+            self.tr("放大"),
             functools.partial(self.addZoom, 1.1),
             shortcuts["zoom_in"],
             "zoom-in",
-            self.tr("Increase zoom level"),
+            self.tr("增加缩放水平"),
             enabled=False,
         )
         zoomOut = action(
-            self.tr("&Zoom Out"),
+            self.tr("&缩小"),
             functools.partial(self.addZoom, 0.9),
             shortcuts["zoom_out"],
             "zoom-out",
-            self.tr("Decrease zoom level"),
+            self.tr("减小缩放水平"),
             enabled=False,
         )
         zoomOrg = action(
-            self.tr("&Original size"),
+            self.tr("&原始大小"),
             functools.partial(self.setZoom, 150),
             shortcuts["zoom_to_original"],
             "zoom",
-            self.tr("Zoom to original size"),
+            self.tr("缩放至原始大小"),
             enabled=False,
         )
         keepPrevScale = action(
-            self.tr("&Keep Previous Scale"),
+            self.tr("&适应窗口"),
             self.enableKeepPrevScale,
-            tip=self.tr("Keep previous zoom scale"),
+            tip=self.tr("跟随窗口大小缩放"),
             checkable=True,
             checked=self._config["keep_prev_scale"],
             enabled=True,
         )
         fitWindow = action(
-            self.tr("&Fit Window"),
+            self.tr("&适应窗口"),
             self.setFitWindow,
             shortcuts["fit_window"],
             "fit-window",
-            self.tr("Zoom follows window size"),
+            self.tr("跟随窗口宽度缩放"),
             checkable=True,
             enabled=False,
         )
         fitWidth = action(
-            self.tr("Fit &Width"),
+            self.tr("适应宽度"),
             self.setFitWidth,
             shortcuts["fit_width"],
             "fit-width",
-            self.tr("Zoom follows window width"),
+            self.tr("跟随窗口宽度缩放"),
             checkable=True,
             enabled=False,
         )
         brightnessContrast = action(
-            "&Brightness Contrast",
+            "&对比度增强",
             self.brightnessContrast,
             None,
             "color",
-            "Adjust brightness and contrast",
+            "调整对比度和亮度",
             enabled=False,
         )
         # Group zoom controls into a list for easier toggling.
@@ -636,20 +650,20 @@ class MainWindow(QtWidgets.QMainWindow):
         }
 
         edit = action(
-            self.tr("&Edit Label"),
+            self.tr("&编辑标签"),
             self.editLabel,
             shortcuts["edit_label"],
             "edit",
-            self.tr("Modify the label of the selected polygon"),
+            self.tr("修改选中多边形的标签"),
             enabled=False,
         )
 
         fill_drawing = action(
-            self.tr("Fill Drawing Polygon"),
+            self.tr("填充所绘多边形"),
             self.canvas.setFillDrawing,
             None,
             "color",
-            self.tr("Fill polygon while drawing"),
+            self.tr("绘制时填充多边形"),
             checkable=True,
             enabled=True,
         )
@@ -679,6 +693,8 @@ class MainWindow(QtWidgets.QMainWindow):
             image_unpass=image_unpass,
             QCResult=QCResult,
             dataset=dataset,
+            slice_dataset=slice_dataset,
+            concat_dataset=concat_dataset,
             close=close,
             deleteFile=deleteFile,
             toggleKeepPrevMode=toggle_keep_prev_mode,
@@ -762,11 +778,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.vertexSelected.connect(self.actions.removePoint.setEnabled)
 
         self.menus = utils.struct(
-            file=self.menu(self.tr("&File")),
-            edit=self.menu(self.tr("&Edit")),
-            view=self.menu(self.tr("&View")),
-            help=self.menu(self.tr("&Help")),
-            recentFiles=QtWidgets.QMenu(self.tr("Open &Recent")),
+            file=self.menu(self.tr("&文件")),
+            edit=self.menu(self.tr("&编辑")),
+            view=self.menu(self.tr("&视图")),
+            recentFiles=QtWidgets.QMenu(self.tr("最近打开")),
             labelList=labelMenu,
         )
 
@@ -789,7 +804,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 quit,
             ),
         )
-        utils.addActions(self.menus.help, (help,))
         utils.addActions(
             self.menus.view,
             (
@@ -842,7 +856,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 name=self._selectAiModelComboBox.currentText()
             )
         )
-        selectAiModelLabel = QtWidgets.QLabel(self.tr("AI Model"))
+        selectAiModelLabel = QtWidgets.QLabel(self.tr("AI 模型"))
         selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
         selectAiModelLabel.setFont(QtGui.QFont(None, 10))
         selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
@@ -857,6 +871,9 @@ class MainWindow(QtWidgets.QMainWindow):
             zoomIn,
             zoomOut,
             dataset,
+            slice_dataset,
+            concat_dataset,
+            None,
             image_pass,
             image_unpass,
             QCResult,
@@ -873,8 +890,6 @@ class MainWindow(QtWidgets.QMainWindow):
             createMode,
             editMode,
             duplicate,
-            copy,
-            paste,
             delete,
             undo,
             brightnessContrast,
@@ -885,7 +900,7 @@ class MainWindow(QtWidgets.QMainWindow):
             selectAiModel,
         )
 
-        self.statusBar().showMessage(str(self.tr("%s started.")) % __appname__)
+        self.statusBar().showMessage(str(self.tr("%s 启动完成.")) % __appname__)
         self.statusBar().show()
 
         if output_file is not None and self._config["auto_save"]:
@@ -1041,6 +1056,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def setClean(self):
         self.dirty = False
+        self.rotate_state = 0
         self.actions.save.setEnabled(False)
         self.actions.createMode.setEnabled(True)
         self.actions.createRectangleMode.setEnabled(True)
@@ -1077,6 +1093,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filename = None
         self.imagePath = None
         self.imageData = None
+        self.tmpimageData = None
+        self.rotatevalue = None
         self.labelFile = None
         self.otherData = None
         self.imagePass = None
@@ -1121,6 +1139,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def toggleDrawMode(self, edit=True, createMode="polygon"):
         self.canvas.setEditing(edit)
         self.canvas.createMode = createMode
+        self.actions.rotate.setEnabled(False)
         if edit:
             self.actions.createMode.setEnabled(True)
             self.actions.createRectangleMode.setEnabled(True)
@@ -1259,8 +1278,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self.validateLabel(text):
             self.errorMessage(
-                self.tr("Invalid label"),
-                self.tr("Invalid label '{}' with validation type '{}'").format(
+                self.tr("无效的标签"),
+                self.tr("无效的标签 '{}' 验证类型 '{}'").format(
                     text, self._config["validate_label"]
                 ),
             )
@@ -1492,7 +1511,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         except LabelFileError as e:
             self.errorMessage(
-                self.tr("Error saving label data"), self.tr("<b>%s</b>") % e
+                self.tr("保存标签发生错误"), self.tr("<b>%s</b>") % e
             )
             return False
 
@@ -1549,7 +1568,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         except LabelFileError as e:
             self.errorMessage(
-                self.tr("Error saving label data"), self.tr("<b>%s</b>") % e
+                self.tr("保存标签发生错误"), self.tr("<b>%s</b>") % e
             )
             return False
 
@@ -1610,8 +1629,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if text and not self.validateLabel(text):
             self.errorMessage(
-                self.tr("Invalid label"),
-                self.tr("Invalid label '{}' with validation type '{}'").format(
+                self.tr("无效的标签"),
+                self.tr("无效的标签 '{}' 验证类型 '{}'").format(
                     text, self._config["validate_label"]
                 ),
             )
@@ -1738,13 +1757,13 @@ class MainWindow(QtWidgets.QMainWindow):
         filename = str(filename)
         if not QtCore.QFile.exists(filename):
             self.errorMessage(
-                self.tr("Error opening file"),
-                self.tr("No such file: <b>%s</b>") % filename,
+                self.tr("打开文件发生错误"),
+                self.tr("文件不存在: <b>%s</b>") % filename,
             )
             return False
         # assumes same name, but json extension
         self.status(
-            str(self.tr("Loading %s...")) % osp.basename(str(filename))
+            str(self.tr("正在载入 %s...")) % osp.basename(str(filename))
         )
         label_file = osp.splitext(filename)[0] + ".json"
         if self.output_dir:
@@ -1757,16 +1776,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.labelFile = LabelFile(label_file)
             except LabelFileError as e:
                 self.errorMessage(
-                    self.tr("Error opening file"),
+                    self.tr("打开文件发生错误"),
                     self.tr(
                         "<p><b>%s</b></p>"
-                        "<p>Make sure <i>%s</i> is a valid label file."
+                        "<p>请确认 <i>%s</i> 是一个合法的图像文件."
                     )
                     % (e, label_file),
                 )
-                self.status(self.tr("Error reading %s") % label_file)
+                self.status(self.tr("打开文件发生错误 %s") % label_file)
                 return False
             self.imageData = self.labelFile.imageData
+            self.tmpimageData= self.labelFile.imageData
             self.imagePath = osp.join(
                 osp.dirname(label_file),
                 self.labelFile.imagePath,
@@ -1776,6 +1796,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.QCResult.setText(str(data))
         else:
             self.imageData = LabelFile.load_image_file(filename)
+            self.tmpimageData = self.imageData
             if self.imageData:
                 self.imagePath = filename
             self.labelFile = None
@@ -1787,13 +1808,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 for fmt in QtGui.QImageReader.supportedImageFormats()
             ]
             self.errorMessage(
-                self.tr("Error opening file"),
+                self.tr("打开文件发生错误"),
                 self.tr(
-                    "<p>Make sure <i>{0}</i> is a valid image file.<br/>"
-                    "Supported image formats: {1}</p>"
+                    "<p>请确认 <i>{0}</i> 是一个合法的图像文件.<br/>"
+                    "支持的格式包括: {1}</p>"
                 ).format(filename, ",".join(formats)),
             )
-            self.status(self.tr("Error reading %s") % filename)
+            self.status(self.tr("打开文件发生错误 %s") % filename)
             return False
         self.image = image
         self.filename = filename
@@ -1812,6 +1833,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.setClean()
         self.canvas.setEnabled(True)
+        self.actions.rotate.setEnabled(True)
+        self.actions.select_onnx.setEnabled(True)
+        self.actions.object.setEnabled(True)
         # set zoom values
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
@@ -1853,7 +1877,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addRecentFile(self.filename)
         self.toggleActions(True)
         self.canvas.setFocus()
-        self.status(str(self.tr("Loaded %s")) % osp.basename(str(filename)))
+        self.status(str(self.tr("已加载 %s")) % osp.basename(str(filename)))
         return True
 
     def resizeEvent(self, event):
@@ -1997,14 +2021,14 @@ class MainWindow(QtWidgets.QMainWindow):
             "*.{}".format(fmt.data().decode())
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
-        filters = self.tr("Image & Label files (%s)") % " ".join(
+        filters = self.tr("图像和标签文件 (%s)") % " ".join(
             formats + ["*%s" % LabelFile.suffix]
         )
         fileDialog = FileDialogPreview(self)
         fileDialog.setFileMode(FileDialogPreview.ExistingFile)
         fileDialog.setNameFilter(filters)
         fileDialog.setWindowTitle(
-            self.tr("%s - Choose Image or Label file") % __appname__,
+            self.tr("%s - 选择图像或标签文件") % __appname__,
         )
         fileDialog.setWindowFilePath(path)
         fileDialog.setViewMode(FileDialogPreview.Detail)
@@ -2014,7 +2038,94 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.loadFile(fileName)
 
     def Rotate(self, _value=False):
-        return
+
+        img = utils.img_data_to_pil(self.tmpimageData)
+        img = img.transpose(PIL.Image.ROTATE_90)
+        self.rotate_state+=90
+        if(self.rotate_state==360):
+            self.rotate_state = 0
+        img_data = utils.img_pil_to_data(img)
+        qimage = QtGui.QImage.fromData(img_data)
+
+        self.remLabels(self.canvas.deleteallShape())
+        self.setDirty()
+        if self.noShapes():
+            for action in self.actions.onShapesPresent:
+                action.setEnabled(False)
+
+        self.canvas.setEnabled(True)
+        if (self.rotate_state == 0):
+            self.actions.openNextImg.setEnabled(True)
+            self.actions.openPrevImg.setEnabled(True)
+            self.canvas.setEnabled(True)
+            self.actions.save.setEnabled(True)
+            self.actions.saveAs.setEnabled(True)
+            self.actions.delete.setEnabled(True)
+            self.actions.deleteFile.setEnabled(True)
+            self.actions.createMode.setEnabled(True)
+            self.actions.editMode.setEnabled(True)
+            self.actions.undoLastPoint.setEnabled(True)
+            self.actions.undo.setEnabled(True)
+            self.actions.select_onnx.setEnabled(True)
+            self.actions.object.setEnabled(True)
+        else:
+            self.canvas.setEnabled(False)
+            self.actions.save.setEnabled(False)
+            self.actions.saveAs.setEnabled(False)
+            self.actions.delete.setEnabled(False)
+            self.actions.deleteFile.setEnabled(False)
+            self.actions.openNextImg.setEnabled(False)
+            self.actions.openPrevImg.setEnabled(False)
+            self.actions.createMode.setEnabled(False)
+            self.actions.editMode.setEnabled(False)
+            self.actions.undoLastPoint.setEnabled(False)
+            self.actions.undo.setEnabled(False)
+            self.actions.select_onnx.setEnabled(False)
+            self.actions.object.setEnabled(False)
+        if self.labelFile:
+            shapes=self.labelFile.shapes
+            s = []
+            for shape in shapes:
+                label = shape["label"]
+                points = shape["points"]
+                shape_type = shape["shape_type"]
+                description = shape.get("description", "")
+                group_id = shape["group_id"]
+                flags = shape["flags"]
+                other_data = shape["other_data"]
+
+                if not points:
+                    continue
+                shape = Shape(
+                    label=label,
+                    shape_type=shape_type,
+                    group_id=group_id,
+                    description=description,
+                )
+                for x, y in points:
+                    if(self.rotate_state==0):
+                        shape.addPoint(QtCore.QPointF(x, y))
+                    if(self.rotate_state==90):
+                        shape.addPoint(QtCore.QPointF(y, self.image.width() - x))
+                    if(self.rotate_state==180):
+                        shape.addPoint(QtCore.QPointF(self.image.width()-x, self.image.height()-y))
+                    if(self.rotate_state==270):
+                         shape.addPoint(QtCore.QPointF(self.image.height()-y, x))
+                default_flags = {}
+                if self._config["label_flags"]:
+                    for pattern, keys in self._config["label_flags"].items():
+                        if re.match(pattern, label):
+                            for key in keys:
+                                default_flags[key] = False
+                shape.flags = default_flags
+                shape.flags.update(flags)
+                shape.other_data = other_data
+                s.append(shape)
+            self.loadShapes(s)
+        self.canvas.loadPixmap(
+            QtGui.QPixmap.fromImage(qimage), clear_shapes=False
+        )
+        self.tmpimageData = img_data
     def select_onnx(self, _value=False):
         dialog = Selectonnx()
         dialog.exec_()
@@ -2069,8 +2180,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def Dataset(self, _value=False):
         dialog = DatasetDialog()
         dialog.exec_()
-
-
+    def Slice_Dataset(self, _value=False):
+        dialog = Slice_dataset()
+        dialog.exec_()
+    def Concat_Dataset(self, _value=False):
+        dialog = Concat_dataset()
+        dialog.exec_()
     def changeOutputDirDialog(self, _value=False):
         default_output_dir = self.output_dir
         if default_output_dir is None and self.filename:
@@ -2080,7 +2195,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         output_dir = QtWidgets.QFileDialog.getExistingDirectory(
             self,
-            self.tr("%s - Save/Load Annotations in Directory") % __appname__,
+            self.tr("%s - 保存和加载批注的路径") % __appname__,
             default_output_dir,
             QtWidgets.QFileDialog.ShowDirsOnly
             | QtWidgets.QFileDialog.DontResolveSymlinks,
@@ -2093,7 +2208,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.output_dir = output_dir
 
         self.statusBar().showMessage(
-            self.tr("%s . Annotations will be saved/loaded in %s")
+            self.tr("%s . 批注会被加载和保存在 %s")
             % ("Change Annotations Dir", self.output_dir)
         )
         self.statusBar().show()
@@ -2124,8 +2239,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._saveFile(self.saveFileDialog())
 
     def saveFileDialog(self):
-        caption = self.tr("%s - Choose File") % __appname__
-        filters = self.tr("Label files (*%s)") % LabelFile.suffix
+        caption = self.tr("%s - 选择文件") % __appname__
+        filters = self.tr("标签文件 (*%s)") % LabelFile.suffix
         if self.output_dir:
             dlg = QtWidgets.QFileDialog(
                 self, caption, self.output_dir, filters
@@ -2149,9 +2264,9 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         filename = dlg.getSaveFileName(
             self,
-            self.tr("Choose File"),
+            self.tr("选择文件"),
             default_labelfile_name,
-            self.tr("Label files (*%s)") % LabelFile.suffix,
+            self.tr("标签文件 (*%s)") % LabelFile.suffix,
         )
         if isinstance(filename, tuple):
             filename, _ = filename
@@ -2182,10 +2297,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def deleteFile(self):
         mb = QtWidgets.QMessageBox
         msg = self.tr(
-            "You are about to permanently delete this label file, "
-            "proceed anyway?"
+            "即将永久性删除此标签文件, "
+            "还要继续吗?"
         )
-        answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
+        answer = mb.warning(self, self.tr("注意"), msg, mb.Yes | mb.No)
         if answer != mb.Yes:
             return
 
@@ -2220,12 +2335,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.dirty:
             return True
         mb = QtWidgets.QMessageBox
-        msg = self.tr('Save annotations to "{}" before closing?').format(
+        msg = self.tr('关闭前保存批注到 "{}" ?').format(
             self.filename
         )
         answer = mb.question(
             self,
-            self.tr("Save annotations?"),
+            self.tr("保存批注?"),
             msg,
             mb.Save | mb.Discard | mb.Cancel,
             mb.Save,
@@ -2263,11 +2378,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def deleteSelectedShape(self):
         yes, no = QtWidgets.QMessageBox.Yes, QtWidgets.QMessageBox.No
         msg = self.tr(
-            "You are about to permanently delete {} polygons, "
-            "proceed anyway?"
+            "即将永久性删除多边形{}, "
+            "还要继续吗?"
         ).format(len(self.canvas.selectedShapes))
         if yes == QtWidgets.QMessageBox.warning(
-            self, self.tr("Attention"), msg, yes | no, yes
+            self, self.tr("注意"), msg, yes | no, yes
         ):
             self.remLabels(self.canvas.deleteSelected())
             self.setDirty()
@@ -2301,7 +2416,7 @@ class MainWindow(QtWidgets.QMainWindow):
         targetDirPath = str(
             QtWidgets.QFileDialog.getExistingDirectory(
                 self,
-                self.tr("%s - Open Directory") % __appname__,
+                self.tr("%s - 打开目录") % __appname__,
                 defaultOpenDirPath,
                 QtWidgets.QFileDialog.ShowDirsOnly
                 | QtWidgets.QFileDialog.DontResolveSymlinks,
