@@ -3,7 +3,8 @@
 /build/
 /dist/
 /*.egg-info/
-
+/labelme/ai/seg_model/*
+!/labelme/ai/seg_model/__init__.py
 *.py[cdo]
 
 .DS_Store
