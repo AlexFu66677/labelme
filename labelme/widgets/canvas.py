@@ -679,7 +679,12 @@ class Canvas(QtWidgets.QWidget):
         self.prevPoint = point
         if not self.boundedMoveShapes(shapes, point - offset):
             self.boundedMoveShapes(shapes, point + offset)
-
+    def deleteallShape(self):
+        deleted_shapes = list(self.shapes)
+        self.shapes.clear()
+        self.storeShapes()
+        self.update()
+        return deleted_shapes
     def paintEvent(self, event):
         if not self.pixmap:
             return super(Canvas, self).paintEvent(event)

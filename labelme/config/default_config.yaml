@@ -1,6 +1,6 @@
 auto_save: false
 display_label_popup: true
-store_data: true
+store_data: false
 keep_prev: false
 keep_prev_scale: false
 keep_prev_brightness: false
@@ -26,13 +26,13 @@ shape:
   vertex_fill_color: [0, 255, 0, 255]
   # selecting / hovering
   select_line_color: [255, 255, 255, 255]
-  select_fill_color: [0, 255, 0, 64]
+  select_fill_color: [0, 255, 0, 155]
   hvertex_fill_color: [255, 255, 255, 255]
   point_size: 8
 
 ai:
   default: 'EfficientSam (accuracy)'
-
+  text_default: 'GroundDINO (accuracy)'
 # main
 flag_dock:
   show: true
@@ -83,7 +83,7 @@ canvas:
     ai_mask: false
 
 shortcuts:
-  close: Ctrl+W
+  close: Ctrl+Shift+W
   open: Ctrl+O
   open_dir: Ctrl+U
   quit: Ctrl+Q
@@ -91,6 +91,13 @@ shortcuts:
   save_as: Ctrl+Shift+S
   save_to: null
   delete_file: Ctrl+Delete
+  select_onnx: null
+  object: [W, Ctrl+W]
+  video_object: null
+  rotate: null
+  dataset: null
+  image_pass: null
+  image_unpass: null
 
   open_next: [D, Ctrl+Shift+D]
   open_prev: [A, Ctrl+Shift+A]

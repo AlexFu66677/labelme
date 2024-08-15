@@ -2,15 +2,29 @@
 
 import functools
 import html
+import ast
 import math
 import os
 import os.path as osp
 import re
 import webbrowser
 
+import shutil
+import cv2
+import PIL.Image
+import PIL.ImageEnhance
+import onnxruntime as ort
+import numpy as np
+from qtpy.QtWidgets import QFileDialog
+import json
+from labelme.widgets import QCWidget
+from labelme.widgets import Selectonnx
+from labelme.widgets import Slice_dataset
+from labelme.widgets import Concat_dataset
+from labelme.widgets import DatasetDialog
+
 import imgviz
 import natsort
-import numpy as np
 from qtpy import QtCore
 from qtpy import QtGui
 from qtpy import QtWidgets
@@ -19,6 +33,8 @@ from qtpy.QtCore import Qt
 from labelme import PY2
 from labelme import __appname__
 from labelme.ai import MODELS
+from labelme.ai import Text2LabelMODELS
+from labelme.ai import GroundingDINO
 from labelme.config import get_config
 from labelme.label_file import LabelFile
 from labelme.label_file import LabelFileError
@@ -33,7 +49,11 @@ from labelme.widgets import LabelListWidgetItem
 from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
+import os
+import json
+import numpy as np
 
+import labelme.utils
 from . import utils
 
 # FIXME
@@ -50,12 +70,12 @@ class MainWindow(QtWidgets.QMainWindow):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = 0, 1, 2
 
     def __init__(
-        self,
-        config=None,
-        filename=None,
-        output=None,
-        output_file=None,
-        output_dir=None,
+            self,
+            config=None,
+            filename=None,
+            output=None,
+            output_file=None,
+            output_dir=None,
     ):
         if output is not None:
             logger.warning("argument output is deprecated, use output_file instead")
@@ -188,6 +208,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.drawingPolygon.connect(self.toggleDrawingSensitive)
 
         self.setCentralWidget(scrollArea)
+        self.rotate_state = 0
 
         features = QtWidgets.QDockWidget.DockWidgetFeatures()
         for dock in ["flag_dock", "label_dock", "shape_dock", "file_dock"]:
@@ -222,6 +243,75 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["open"],
             "open",
             self.tr("Open image or label file"),
+        )
+        rotate = action(
+            self.tr("&旋转"),
+            self.Rotate,
+            shortcuts["rotate"],
+            "rotate",
+            self.tr("图像旋转"),
+            enabled=False,
+        )
+        select_onnx = action(
+            self.tr("&选择模型"),
+            self.select_onnx,
+            shortcuts["select_onnx"],
+            "select_onnx",
+            self.tr("选择模型"),
+            enabled=False,
+        )
+        object = action(
+            self.tr("&目标检测"),
+            self.object_detection,
+            shortcuts["object"],
+            "object",
+            self.tr("目标检测"),
+            enabled=False,
+        )
+        video_object = action(
+            self.tr("&视频目标检测"),
+            self.video_object_detection,
+            shortcuts["video_object"],
+            "video_object",
+            self.tr("视频帧目标检测"),
+            enabled=False,
+        )
+        image_pass = action(
+            self.tr("&复核通过"),
+            self.Image_pass,
+            shortcuts["image_pass"],
+            "image_pass",
+            self.tr("复核通过"),
+            enabled=False,
+        )
+        image_unpass = action(
+            self.tr("&复核不通过"),
+            self.Image_unpass,
+            shortcuts["image_unpass"],
+            "image_unpass",
+            self.tr("复核不通过"),
+            enabled=False,
+        )
+        dataset = action(
+            self.tr("&数据集生成"),
+            self.Dataset,
+            shortcuts["dataset"],
+            "dataset",
+            self.tr("数据集生成"),
+        )
+        slice_dataset = action(
+            self.tr("&数据集分割"),
+            self.Slice_Dataset,
+            shortcuts["dataset"],
+            "slice",
+            self.tr("数据分割"),
+        )
+        concat_dataset = action(
+            self.tr("&数据集合并"),
+            self.Concat_Dataset,
+            shortcuts["dataset"],
+            "concat",
+            self.tr("数据合并"),
         )
         opendir = action(
             self.tr("Open Dir"),
@@ -493,6 +583,17 @@ class MainWindow(QtWidgets.QMainWindow):
             tip=self.tr("Show tutorial page"),
         )
 
+        self.QCResult = QCWidget()
+        QCResult = QtWidgets.QWidgetAction(self)
+        QCResultBoxLayout = QtWidgets.QVBoxLayout()
+        QCResultBoxLayout.addWidget(self.QCResult)
+        QCResultLabel = QtWidgets.QLabel("复核结果")
+        QCResultLabel.setAlignment(Qt.AlignCenter)
+        QCResultLabel.setFont(QtGui.QFont(None, 10))
+        QCResultBoxLayout.addWidget(QCResultLabel)
+        QCResult.setDefaultWidget(QtWidgets.QWidget())
+        QCResult.defaultWidget().setLayout(QCResultBoxLayout)
+
         zoom = QtWidgets.QWidgetAction(self)
         zoomBoxLayout = QtWidgets.QVBoxLayout()
         zoomLabel = QtWidgets.QLabel(self.tr("Zoom"))
@@ -627,6 +728,16 @@ class MainWindow(QtWidgets.QMainWindow):
             save=save,
             saveAs=saveAs,
             open=open_,
+            rotate=rotate,
+            video_object=video_object,
+            select_onnx=select_onnx,
+            object=object,
+            image_pass=image_pass,
+            image_unpass=image_unpass,
+            QCResult=QCResult,
+            dataset=dataset,
+            slice_dataset=slice_dataset,
+            concat_dataset=concat_dataset,
             close=close,
             deleteFile=deleteFile,
             toggleKeepPrevMode=toggle_keep_prev_mode,
@@ -660,6 +771,7 @@ class MainWindow(QtWidgets.QMainWindow):
             openPrevImg=openPrevImg,
             fileMenuActions=(open_, opendir, save, saveAs, close, quit),
             tool=(),
+            left_tool=(),
             # XXX: need to add some actions here to activate the shortcut
             editMenu=(
                 edit,
@@ -779,12 +891,54 @@ class MainWindow(QtWidgets.QMainWindow):
                 action("&Move here", self.moveShape),
             ),
         )
+        self.text2label_model = None
+        selectAiText2LabelModel = QtWidgets.QWidgetAction(self)
+        selectAiText2LabelModel.setDefaultWidget(QtWidgets.QWidget())
+        selectAiText2LabelModel.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        selectAiText2LabelModelLabel = QtWidgets.QLabel(self.tr("DINO"))
+        selectAiText2LabelModelLabel.setAlignment(QtCore.Qt.AlignCenter)
+        selectAiText2LabelModel.defaultWidget().layout().addWidget(selectAiText2LabelModelLabel)
+        self._selectAiText2LabelModelComboBox = QtWidgets.QComboBox()
+        selectAiText2LabelModel.defaultWidget().layout().addWidget(self._selectAiText2LabelModelComboBox)
+        text2label_model_names = [model.name for model in Text2LabelMODELS]
+        self._selectAiText2LabelModelComboBox.addItems(text2label_model_names)
+        #禁止自动加载模型 提升软件整体初始化速度
+        if self._config["ai"]["text_default"] in text2label_model_names:
+            text_model_index = text2label_model_names.index(self._config["ai"]["text_default"])
+        self._selectAiText2LabelModelComboBox.setCurrentIndex(text_model_index)
+        self.init_text2lable_model(Text2LabelMODELS[text_model_index].config_path,Text2LabelMODELS[text_model_index].model_path)
+        self._selectAiText2LabelModelComboBox.currentIndexChanged.connect(
+            lambda: self.init_text2lable_model(
+                Text2LabelMODELS[text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].config_path,
+                Text2LabelMODELS[text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].model_path
+                # "D:\code\Grounded-Segment-Anything\GroundingDINO\groundingdino\config\GroundingDINO_SwinT_OGC.py",
+                # "D:\code\Grounded-Segment-Anything\groundingdino_swint_ogc.pth"
+                # name=self._selectAiText2LabelModelComboBox.currentText()
+            )
+        )
+        Text2Label_Input = QtWidgets.QWidgetAction(self)
+        Text2Label_Input.setDefaultWidget(QtWidgets.QWidget())
+        Text2Label_Input.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        self.Text2Label_Text = QtWidgets.QLineEdit(self)
+        self.Text2Label_Text.setFixedWidth(400)
+        self.Text2Label_detect_button = QtWidgets.QPushButton("Text2Label", self)
+        self.Text2Label_detect_button.setFixedWidth(400)
+        self.Text2Label_Text.setAlignment(QtCore.Qt.AlignCenter)
+        # Text2Label_detect_button.setAlignment(QtCore.Qt.AlignCenter)
+        Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_Text)
+        Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_detect_button)
+        self.Text2Label_detect_button.clicked.connect(self.Run_Text2Label)
+        # self.Text2Label_detect_button.clicked.connect(self.run_text2label)
+        # self.Text2Label_input.setDefaultWidget(QtWidgets.QWidget())
+        # self.Text2Label_detect_button.setDefaultWidget(QtWidgets.QWidget())
+        # self.Text2Label_input.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        # self.Text2Label_detect_button.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
 
         selectAiModel = QtWidgets.QWidgetAction(self)
         selectAiModel.setDefaultWidget(QtWidgets.QWidget())
         selectAiModel.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
         #
-        selectAiModelLabel = QtWidgets.QLabel(self.tr("AI Model"))
+        selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM"))
         selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
         selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
         #
@@ -810,6 +964,24 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         self.tools = self.toolbar("Tools")
+        self.lefttools = self.lefttoolbar("LeftTools")
+
+        self.actions.lefttool = (
+            select_onnx,
+            object,
+            rotate,
+            # video_object,
+            zoomIn,
+            zoomOut,
+            dataset,
+            slice_dataset,
+            concat_dataset,
+            None,
+            image_pass,
+            image_unpass,
+            QCResult,
+        )
+
         self.actions.tool = (
             open_,
             opendir,
@@ -829,6 +1001,9 @@ class MainWindow(QtWidgets.QMainWindow):
             zoom,
             None,
             selectAiModel,
+            selectAiText2LabelModel,
+            Text2Label_Input,
+
         )
 
         self.statusBar().showMessage(str(self.tr("%s started.")) % __appname__)
@@ -876,6 +1051,10 @@ class MainWindow(QtWidgets.QMainWindow):
         state = self.settings.value("window/state", QtCore.QByteArray())
         self.resize(size)
         self.move(position)
+        self.center()
+        self.onnx_path = ''
+        self.net = None
+        self.label_list = {}
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
         self.restoreState(state)
@@ -912,13 +1091,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         return toolbar
 
+    def lefttoolbar(self, title, actions=None):
+        toolbar = ToolBar(title)
+        toolbar.setObjectName("%sLeftToolBar" % title)
+        # toolbar.setOrientation(Qt.Vertical)
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+
+        # action1 = QAction("Action 1", self)
+        # action2 = QAction("Action 2", self)
+        # # 将动作添加到工具栏
+        # toolbar.addAction(action1)
+        # toolbar.addAction(action2)
+
+        if actions:
+            utils.addActions(toolbar, actions)
+        self.addToolBar(Qt.LeftToolBarArea, toolbar)
+        return toolbar
+
     # Support Functions
 
     def noShapes(self):
         return not len(self.labelList)
 
+    def center(self):
+        screen = QtWidgets.QDesktopWidget().availableGeometry()
+        window_size = self.geometry()
+        x = (screen.width() - window_size.width()) // 2
+        y = (screen.height() - window_size.height()) // 2
+        self.move(x, y)
+
     def populateModeActions(self):
-        tool, menu = self.actions.tool, self.actions.menu
+        lefttool, tool, menu = self.actions.lefttool, self.actions.tool, self.actions.menu
+        self.lefttools.clear()
+        utils.addActions(self.lefttools, lefttool)
         self.tools.clear()
         utils.addActions(self.tools, tool)
         self.canvas.menus[0].clear()
@@ -956,6 +1161,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(title)
 
     def setClean(self):
+        self.rotate_state = 0
+        self.actions.rotate.setEnabled(False)
         self.dirty = False
         self.actions.save.setEnabled(False)
         self.actions.createMode.setEnabled(True)
@@ -996,6 +1203,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.imageData = None
         self.labelFile = None
         self.otherData = None
+        self.tmpimageData = None
+        self.rotatevalue = None
+        self.imagePass = None
+        self.QCResult.setText(None)
         self.canvas.resetState()
 
     def currentItem(self):
@@ -1044,16 +1255,18 @@ class MainWindow(QtWidgets.QMainWindow):
             "ai_polygon": self.actions.createAiPolygonMode,
             "ai_mask": self.actions.createAiMaskMode,
         }
-
+        self.actions.rotate.setEnabled(False)
         self.canvas.setEditing(edit)
         self.canvas.createMode = createMode
         if edit:
             for draw_action in draw_actions.values():
                 draw_action.setEnabled(True)
+            self.actions.rotate.setEnabled(False)
         else:
             for draw_mode, draw_action in draw_actions.items():
                 draw_action.setEnabled(createMode != draw_mode)
         self.actions.editMode.setEnabled(not edit)
+        self.actions.rotate.setEnabled(False)
 
     def setEditMode(self):
         self.toggleDrawMode(True)
@@ -1283,9 +1496,9 @@ class MainWindow(QtWidgets.QMainWindow):
             label_id += self._config["shift_auto_shape_color"]
             return LABEL_COLORMAP[label_id % len(LABEL_COLORMAP)]
         elif (
-            self._config["shape_color"] == "manual"
-            and self._config["label_colors"]
-            and label in self._config["label_colors"]
+                self._config["shape_color"] == "manual"
+                and self._config["label_colors"]
+                and label in self._config["label_colors"]
         ):
             return self._config["label_colors"][label]
         elif self._config["default_shape_color"]:
@@ -1352,7 +1565,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setCheckState(Qt.Checked if flag else Qt.Unchecked)
             self.flag_widget.addItem(item)
 
-    def saveLabels(self, filename):
+    def saveLabels(self, filename, imagePass=None):
         lf = LabelFile()
 
         def format_shape(s):
@@ -1393,6 +1606,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 imageWidth=self.image.width(),
                 otherData=self.otherData,
                 flags=flags,
+                imagePass=imagePass,
             )
             self.labelFile = lf
             items = self.fileListWidget.findItems(self.imagePath, Qt.MatchExactly)
@@ -1409,8 +1623,86 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return False
 
+    def save_AI_Labels(self, filename, res, imagePass=None):
+        lf = LabelFile()
+
+        def format_shape(s):
+            # doc = {}
+            # doc[0] = 'people'
+            # doc[1] = 'car'
+            # doc[2] = 'tent'
+            # doc[3] = 'snadbags'
+            # doc[4] = 'cone'
+            # doc[5] = 'pipeline'
+            # doc[6] = 'tank'
+            if self.label_list:
+                data = dict(
+                    label=self.label_list[s[0]],
+                    points=[(p[0], p[1]) for p in s[1:5]],
+                    group_id=None,
+                    description="",
+                    shape_type="rectangle",
+                    flags={},
+                )
+            else:
+                data = dict(
+                    label=s[0],
+                    points=[(p[0], p[1]) for p in s[1:5]],
+                    group_id=None,
+                    description="",
+                    shape_type="rectangle",
+                    flags={},
+                )
+            return data
+
+        shapes = [format_shape(item) for item in res]
+        flags = {}
+        for i in range(self.flag_widget.count()):
+            item = self.flag_widget.item(i)
+            key = item.text()
+            flag = item.checkState() == Qt.Checked
+            flags[key] = flag
+        try:
+            if self.labelFile:
+                # 如果不为空，将新 shapes 追加到现有的 shapes 中
+                existing_shapes = self.labelFile.shapes
+                shapes = existing_shapes + shapes
+
+            imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
+            imageData = self.imageData if self._config["store_data"] else None
+            if osp.dirname(filename) and not osp.exists(osp.dirname(filename)):
+                os.makedirs(osp.dirname(filename))
+            lf.save(
+                filename=filename,
+                shapes=shapes,
+                imagePath=imagePath,
+                imageData=imageData,
+                imageHeight=self.image.height(),
+                imageWidth=self.image.width(),
+                otherData=self.otherData,
+                flags=flags,
+                imagePass=imagePass,
+            )
+            self.labelFile = lf
+            items = self.fileListWidget.findItems(
+                self.imagePath, Qt.MatchExactly
+            )
+            if len(items) > 0:
+                if len(items) != 1:
+                    raise RuntimeError("There are duplicate files.")
+                items[0].setCheckState(Qt.Checked)
+            # disable allows next and previous image to proceed
+            # self.filename = filename
+            return True
+        except LabelFileError as e:
+            self.errorMessage(
+                self.tr("保存标签发生错误"), self.tr("<b>%s</b>") % e
+            )
+            return False
+
     def duplicateSelectedShape(self):
         added_shapes = self.canvas.duplicateSelectedShapes()
+        self.labelList.clearSelection()
         for shape in added_shapes:
             self.addLabel(shape)
         self.setDirty()
@@ -1582,7 +1874,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Load the specified file, or the last opened file if None."""
         # changing fileListWidget loads file
         if filename in self.imageList and (
-            self.fileListWidget.currentRow() != self.imageList.index(filename)
+                self.fileListWidget.currentRow() != self.imageList.index(filename)
         ):
             self.fileListWidget.setCurrentRow(self.imageList.index(filename))
             self.fileListWidget.repaint()
@@ -1620,13 +1912,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.status(self.tr("Error reading %s") % label_file)
                 return False
             self.imageData = self.labelFile.imageData
+            self.tmpimageData = self.labelFile.imageData
             self.imagePath = osp.join(
                 osp.dirname(label_file),
                 self.labelFile.imagePath,
             )
             self.otherData = self.labelFile.otherData
+            try:
+                data = self.labelFile.imagePass
+            except:
+                data = None
+            self.QCResult.setText(str(data))
         else:
             self.imageData = LabelFile.load_image_file(filename)
+            self.tmpimageData = self.imageData
             if self.imageData:
                 self.imagePath = filename
             self.labelFile = None
@@ -1663,6 +1962,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.setClean()
         self.canvas.setEnabled(True)
+        self.actions.rotate.setEnabled(False)
+        self.actions.select_onnx.setEnabled(True)
+        # self.actions.object.setEnabled(True)
+        self.actions.video_object.setEnabled(True)
         # set zoom values
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
@@ -1707,11 +2010,476 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status(str(self.tr("Loaded %s")) % osp.basename(str(filename)))
         return True
 
+    def Rotate(self, _value=False):
+
+        img = utils.img_data_to_pil(self.tmpimageData)
+        img = img.transpose(PIL.Image.ROTATE_90)
+        self.rotate_state += 90
+        if (self.rotate_state == 360):
+            self.rotate_state = 0
+        img_data = utils.img_pil_to_data(img)
+        qimage = QtGui.QImage.fromData(img_data)
+
+        self.remLabels(self.canvas.deleteallShape())
+        self.setDirty()
+        if self.noShapes():
+            for action in self.actions.onShapesPresent:
+                action.setEnabled(False)
+
+        self.canvas.setEnabled(True)
+        if (self.rotate_state == 0):
+            self.actions.openNextImg.setEnabled(True)
+            self.actions.openPrevImg.setEnabled(True)
+            self.canvas.setEnabled(True)
+            self.actions.save.setEnabled(True)
+            self.actions.saveAs.setEnabled(True)
+            self.actions.delete.setEnabled(True)
+            self.actions.deleteFile.setEnabled(True)
+            self.actions.createMode.setEnabled(True)
+            self.actions.editMode.setEnabled(True)
+            self.actions.undoLastPoint.setEnabled(True)
+            self.actions.undo.setEnabled(True)
+            self.actions.select_onnx.setEnabled(True)
+            # self.actions.object.setEnabled(True)
+            self.actions.video_object.setEnabled(True)
+        else:
+            self.canvas.setEnabled(False)
+            self.actions.save.setEnabled(False)
+            self.actions.saveAs.setEnabled(False)
+            self.actions.delete.setEnabled(False)
+            self.actions.deleteFile.setEnabled(False)
+            self.actions.openNextImg.setEnabled(False)
+            self.actions.openPrevImg.setEnabled(False)
+            self.actions.createMode.setEnabled(False)
+            self.actions.editMode.setEnabled(False)
+            self.actions.undoLastPoint.setEnabled(False)
+            self.actions.undo.setEnabled(False)
+            self.actions.select_onnx.setEnabled(False)
+            self.actions.object.setEnabled(False)
+            self.actions.video_object.setEnabled(False)
+        if self.labelFile:
+            shapes = self.labelFile.shapes
+            s = []
+            for shape in shapes:
+                label = shape["label"]
+                points = shape["points"]
+                shape_type = shape["shape_type"]
+                description = shape.get("description", "")
+                group_id = shape["group_id"]
+                flags = shape["flags"]
+                other_data = shape["other_data"]
+
+                if not points:
+                    continue
+                shape = Shape(
+                    label=label,
+                    shape_type=shape_type,
+                    group_id=group_id,
+                    description=description,
+                )
+                for x, y in points:
+                    if (self.rotate_state == 0):
+                        shape.addPoint(QtCore.QPointF(x, y))
+                    if (self.rotate_state == 90):
+                        shape.addPoint(QtCore.QPointF(y, self.image.width() - x))
+                    if (self.rotate_state == 180):
+                        shape.addPoint(QtCore.QPointF(self.image.width() - x, self.image.height() - y))
+                    if (self.rotate_state == 270):
+                        shape.addPoint(QtCore.QPointF(self.image.height() - y, x))
+                default_flags = {}
+                if self._config["label_flags"]:
+                    for pattern, keys in self._config["label_flags"].items():
+                        if re.match(pattern, label):
+                            for key in keys:
+                                default_flags[key] = False
+                shape.flags = default_flags
+                shape.flags.update(flags)
+                shape.other_data = other_data
+                s.append(shape)
+            self.loadShapes(s)
+        self.canvas.loadPixmap(
+            QtGui.QPixmap.fromImage(qimage), clear_shapes=False
+        )
+        self.tmpimageData = img_data
+
+    def select_onnx(self, _value=False):
+        # dialog = Selectonnx()
+        # dialog.exec_()
+        # file_dialog = QtWidgets.QFileDialog()
+        # file_dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        # file_dialog.setNameFilter('Text files (*.onnx);;All files (*.*)')
+        # self.onnx_path=file_dialog.selectedFiles()[0]
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, 'Select ONNX File', '', 'ONNX Files (*.onnx);;All Files (*)',
+                                                   options=options)
+        self.onnx_path = file_name
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        self.net = ort.InferenceSession(self.onnx_path, so)
+        self.actions.object.setEnabled(True)
+        self.actions.rotate.setEnabled(False)
+
+    # D:\code\Grounded-Segment-Anything\GroundingDINO\groundingdino\config\GroundingDINO_SwinT_OGC.py
+    # D:\code\Grounded-Segment-Anything\groundingdino_swint_ogc.pth
+    def init_text2lable_model(self, config_path,model_path,_value=False):
+        # args = SLConfig.fromfile(config_path[0])
+        # args.device = "cuda"
+        # self.text2label_model = build_model(args)
+        # checkpoint = torch.load(str(model_path), map_location="cuda")
+        # self.text2label_model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+        # self.text2label_model.eval()
+        # self.actions.object.setEnabled(True)
+        # self.actions.rotate.setEnabled(False)
+
+        self.text2label_model = GroundingDINO(model_path, 0.3, "./ai/seg_model/vocab.txt", 0.25)
+        self.actions.object.setEnabled(True)
+        self.actions.rotate.setEnabled(False)
+        return self.text2label_model
+
+    def video_object_detection(self, _value=False):
+
+        index = self.imageList.index(self.filename)
+        if index == 0:
+            return 0
+        else:
+            pre_image_name = self.imageList[index - 1]
+            pre_image = cv2.imread(pre_image_name)
+            cur_image = cv2.imread(self.filename)
+            sift = cv2.SIFT_create()
+            keypoints1, descriptors1 = sift.detectAndCompute(pre_image, None)
+            keypoints2, descriptors2 = sift.detectAndCompute(cur_image, None)
+            # 创建FLANN匹配器
+            FLANN_INDEX_KDTREE = 0
+            index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+            search_params = dict(checks=50)
+            flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+            # 使用KNN匹配特征点
+            matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+            # 应用比率测试来选择良好的匹配点
+            good_matches = []
+            for m, n in matches:
+                if m.distance < 0.7 * n.distance:
+                    good_matches.append(m)
+
+            src_pts = np.float32([keypoints1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            # 使用RANSAC算法计算单应性矩阵H
+            H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            json_path = (pre_image_name).replace('.jpg', '.json')
+            polygon = []
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            for shape in data['shapes']:
+                # src_point0 = np.array([shape['points'][0][0], shape['points'][0][1]])
+                # src_point1 = np.array([shape['points'][1][0], shape['points'][1][1]])
+
+                src_point0 = np.array([[shape['points'][0][0], shape['points'][0][1]]], dtype=np.float32)
+                src_point1 = np.array([[shape['points'][1][0], shape['points'][1][1]]], dtype=np.float32)
+                points0 = cv2.perspectiveTransform(src_point0.reshape(-1, 1, 2), H).tolist()
+                points1 = cv2.perspectiveTransform(src_point1.reshape(-1, 1, 2), H).tolist()
+                class_id = 0
+
+                points0 = [int(points0[0][0][0]), int(points0[0][0][1])]
+                points1 = [int(points1[0][0][0]), int(points1[0][0][1])]
+                polygon.append([class_id, points0, points1])
+            label_file = osp.splitext(self.imagePath)[0] + ".json"
+            if self.output_dir:
+                label_file_without_path = osp.basename(label_file)
+                label_file = osp.join(self.output_dir, label_file_without_path)
+            self.save_AI_Labels(label_file, polygon)
+            self.loadFile(self.filename)
+
+    def object_detection(self, _value=False):
+
+        def nms(pred, conf_thres, iou_thres):
+            conf = pred[..., 4] > conf_thres
+            box = pred[conf == True]
+            cls_conf = box[..., 5:]
+            cls = []
+            for i in range(len(cls_conf)):
+                cls.append(int(np.argmax(cls_conf[i])))
+            total_cls = list(set(cls))
+            output_box = []
+            for i in range(len(total_cls)):
+                clss = total_cls[i]
+                cls_box = []
+                for j in range(len(cls)):
+                    if cls[j] == clss:
+                        box[j][5] = clss
+                        cls_box.append(box[j][:6])
+                cls_box = np.array(cls_box)
+                box_conf = cls_box[..., 4]
+                box_conf_sort = np.argsort(box_conf)
+                max_conf_box = cls_box[box_conf_sort[len(box_conf) - 1]]
+                output_box.append(max_conf_box)
+                cls_box = np.delete(cls_box, 0, 0)
+                while len(cls_box) > 0:
+                    max_conf_box = output_box[len(output_box) - 1]
+                    del_index = []
+                    for j in range(len(cls_box)):
+                        current_box = cls_box[j]
+                        interArea = getInter(max_conf_box, current_box)
+                        iou = getIou(max_conf_box, current_box, interArea)
+                        if iou > iou_thres:
+                            del_index.append(j)
+                    cls_box = np.delete(cls_box, del_index, 0)
+                    if len(cls_box) > 0:
+                        output_box.append(cls_box[0])
+                        cls_box = np.delete(cls_box, 0, 0)
+            return output_box
+
+        def getIou(box1, box2, inter_area):
+            box1_area = box1[2] * box1[3]
+            box2_area = box2[2] * box2[3]
+            union = box1_area + box2_area - inter_area
+            iou = inter_area / union
+            return iou
+
+        def getInter(box1, box2):
+            box1_x1, box1_y1, box1_x2, box1_y2 = box1[0] - box1[2] / 2, box1[1] - box1[3] / 2, \
+                                                 box1[0] + box1[2] / 2, box1[1] + box1[3] / 2
+            box2_x1, box2_y1, box2_x2, box2_y2 = box2[0] - box2[2] / 2, box2[1] - box1[3] / 2, \
+                                                 box2[0] + box2[2] / 2, box2[1] + box2[3] / 2
+            if box1_x1 > box2_x2 or box1_x2 < box2_x1:
+                return 0
+            if box1_y1 > box2_y2 or box1_y2 < box2_y1:
+                return 0
+            x_list = [box1_x1, box1_x2, box2_x1, box2_x2]
+            x_list = np.sort(x_list)
+            x_inter = x_list[2] - x_list[1]
+            y_list = [box1_y1, box1_y2, box2_y1, box2_y2]
+            y_list = np.sort(y_list)
+            y_inter = y_list[2] - y_list[1]
+            inter = x_inter * y_inter
+            return inter
+
+        def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), stride=32):
+            shape = im.shape[:2]  # current shape [height, width]
+            r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+            ratio = r, r  # width, height ratios
+            new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+            dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+            dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
+            dw /= 2  # divide padding into 2 sides
+            dh /= 2
+            if shape[::-1] != new_unpad:  # resize
+                im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
+            top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+            left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+            im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+            return im, ratio, (dw, dh)
+
+        def resize_with_padding(image, target_size, fill_color=114):
+            original_size = image.shape[:2]  # 原始尺寸 (height, width)
+            ratio = min(target_size[1] / original_size[1], target_size[0] / original_size[0])
+            new_size = (int(original_size[0] * ratio), int(original_size[1] * ratio))  # new_size (height, width)
+            resized_image = cv2.resize(image, (new_size[1], new_size[0]))
+            new_image = np.full((target_size[0], target_size[1], 3), fill_color, dtype=np.uint8)
+            new_image[0:new_size[0], 0:new_size[1]] = resized_image
+            return new_image, ratio
+
+        image = labelme.utils.img_qt_to_arr(self.image)
+        # so = ort.SessionOptions()
+        # so.log_severity_level = 3
+        # net = ort.InferenceSession(self.onnx_path, so)
+        input_tensors = self.net.get_inputs()
+        self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])  # 该 API 会返回列表
+        for input_tensor in input_tensors:  # 因为可能有多个输入，所以为列表
+            input_info = {
+                "name": input_tensor.name,
+                "type": input_tensor.type,
+                "shape": input_tensor.shape,
+            }
+        # resize_h = math.floor(image.shape[0]/32)*32
+        # resize_w = math.floor(image.shape[1]/32)*32
+        # img = cv2.resize(image, (resize_w,resize_h))
+        # offset_h=input_info["shape"][2]-resize_h
+        # offset_w = input_info["shape"][3] - resize_w
+        # img = cv2.resize(image, (960, 544))
+        # offset_h=960-544
+        # offset_w = 0
+        # img = cv2.copyMakeBorder(img, 0,  offset_h, 0, offset_w, cv2.BORDER_CONSTANT, value=(114,114,114))
+        # img = cv2.resize(image, (input_info["shape"][3], input_info["shape"][2]))
+        # img, ratio, (dw, dh) = letterbox(image, (input_info["shape"][3], input_info["shape"][2]))
+        # img = cv2.resize(image, (640, 360))
+        # img = cv2.copyMakeBorder(img, 0, 280, 0, 0, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+        # img = resize_with_padding(image,(input_info["shape"][2],input_info["shape"][3]))
+        img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+        # img = cv2.resize(img, (input_info["shape"][3], input_info["shape"][2]))
+        img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
+        img = img / 255
+        img = img.astype(np.float32)
+        blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
+        inputs = {self.net.get_inputs()[0].name: blob}
+        pred = self.net.run(None, inputs)[0]
+        polygon = []
+        pred = np.squeeze(pred)
+        pred = np.transpose(pred, (1, 0))
+        pred_class = pred[..., 4:]
+        pred_conf = np.max(pred_class, axis=-1)
+        pred = np.insert(pred, 4, pred_conf, axis=-1)
+        result = nms(pred, 0.4, 0.45)
+        for detection in result:
+            xmin, ymin, xmax, ymax, score, class_id = detection
+
+            detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
+                      int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
+            # detect = [int((xmin - xmax / 2) * image.shape[1]/input_info["shape"][3]), int((ymin - ymax / 2) * (image.shape[0]/input_info["shape"][2])),
+            #           int((xmin + xmax / 2) * image.shape[1]/input_info["shape"][3]), int((ymin + ymax / 2) * (image.shape[0]/input_info["shape"][2]))]
+            points0 = [detect[0], detect[1]]
+            points1 = [detect[2], detect[3]]
+            polygon.append([class_id, points0, points1])
+        label_file = osp.splitext(self.imagePath)[0] + ".json"
+        if self.output_dir:
+            label_file_without_path = osp.basename(label_file)
+            label_file = osp.join(self.output_dir, label_file_without_path)
+        self.save_AI_Labels(label_file, polygon)
+        self.loadFile(self.filename)
+
+    def Run_Text2Label(self, _value=False):
+        image = labelme.utils.img_qt_to_arr(self.image)
+        if image.shape[-1] == 1:
+            image = np.squeeze(image, axis=-1)
+        # image = Image.fromarray(image)
+        boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+
+        size = image.shape
+        pred_dict = {
+            "boxes": boxes_filt,
+            "size": [size[0], size[1]],  # H,W
+            "labels": pred_phrases,
+        }
+        H, W = pred_dict["size"]
+        boxes = pred_dict["boxes"]
+        labels = pred_dict["labels"]
+        polygon = []
+        for box, label in zip(boxes, labels):
+            # from 0..1 to 0..W, 0..H
+            box = box * np.array([W, H, W, H])
+            # from xywh to xyxy
+            box[:2] -= box[2:] / 2
+            box[2:] += box[:2]
+            x0, y0, x1, y1 = box
+            x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+            points0 = [x0, y0]
+            points1 = [x1, y1]
+            polygon.append([label, points0, points1])
+        label_file = osp.splitext(self.imagePath)[0] + ".json"
+        if self.output_dir:
+            label_file_without_path = osp.basename(label_file)
+            label_file = osp.join(self.output_dir, label_file_without_path)
+        self.save_AI_Labels(label_file, polygon)
+        self.loadFile(self.filename)
+
+        # if not self.Text2Label_Text.text():
+        #     return "请输入文本"
+        # caption = self.Text2Label_Text.text()
+        # caption = caption.lower()
+        # caption = caption.strip()
+        #
+        # if not caption.endswith("."):
+        #     caption = caption + "."
+        # device = "cuda"
+        # model = self.text2label_model.to(device)
+        # image = labelme.utils.img_qt_to_arr(self.image)
+        # if image.shape[-1] == 1:
+        #     image = np.squeeze(image, axis=-1)
+        # image = Image.fromarray(image)
+        # image_infer = image.convert("RGB")  # load image
+        # trans = transforms.Compose(
+        #     [
+        #         transforms.RandomResize([800], max_size=1333),
+        #         transforms.ToTensor(),
+        #         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        #     ]
+        # )
+        # image_infer, _ = trans(image_infer, None)  # 3, h, w
+        #
+        # image_infer = image_infer.to(device)
+        # with torch.no_grad():
+        #     outputs = model(image_infer[None], captions=[caption])
+        # logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
+        # boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
+        # logits.shape[0]
+        # logits_filt = logits.clone()
+        # boxes_filt = boxes.clone()
+        # filt_mask = logits_filt.max(dim=1)[0] > 0.3
+        # logits_filt = logits_filt[filt_mask]  # num_filt, 256
+        # boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
+        # logits_filt.shape[0]
+        #
+        # # get phrase
+        # tokenlizer = model.tokenizer
+        # tokenized = tokenlizer(caption)
+        # # build pred
+        # pred_phrases = []
+        # for logit, box in zip(logits_filt, boxes_filt):
+        #     pred_phrase = get_phrases_from_posmap(logit > 0.25, tokenized, tokenlizer)
+        #     pred_phrases.append(pred_phrase)
+        #
+        # size = image.size
+        # pred_dict = {
+        #     "boxes": boxes_filt,
+        #     "size": [size[1], size[0]],  # H,W
+        #     "labels": pred_phrases,
+        # }
+        # H, W = pred_dict["size"]
+        # boxes = pred_dict["boxes"]
+        # labels = pred_dict["labels"]
+        # polygon = []
+        # for box, label in zip(boxes, labels):
+        #     # from 0..1 to 0..W, 0..H
+        #     box = box * torch.Tensor([W, H, W, H])
+        #     # from xywh to xyxy
+        #     box[:2] -= box[2:] / 2
+        #     box[2:] += box[:2]
+        #     x0, y0, x1, y1 = box
+        #     x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+        #     points0 = [x0, y0]
+        #     points1 = [x1, y1]
+        #     polygon.append([label, points0, points1])
+        # label_file = osp.splitext(self.imagePath)[0] + ".json"
+        # if self.output_dir:
+        #     label_file_without_path = osp.basename(label_file)
+        #     label_file = osp.join(self.output_dir, label_file_without_path)
+        # self.save_AI_Labels(label_file, polygon)
+        # self.loadFile(self.filename)
+
+    def Image_pass(self, _value=False):
+        if not os.path.exists(self.lastOpenDir + '/image'):
+            os.makedirs(self.lastOpenDir + '/image')
+        if not os.path.exists(self.lastOpenDir + '/json'):
+            os.makedirs(self.lastOpenDir + '/json')
+        label_file = osp.splitext(self.filename)[0] + ".json"
+        label_outdir = osp.join(self.lastOpenDir + '/json', str(os.path.split(label_file)[1]))
+        image_outdir = osp.join(self.lastOpenDir + '/image', str(os.path.split(self.filename)[1]))
+        self.saveLabels(label_file, True)
+        if osp.exists(self.lastOpenDir + '/image'):
+            shutil.copyfile(self.filename, image_outdir)
+            shutil.copyfile(label_file, label_outdir)
+
+    def Image_unpass(self, _value=False):
+        label_file = osp.splitext(self.filename)[0] + ".json"
+        self.saveLabels(label_file, False)
+
+    def Dataset(self, _value=False):
+        dialog = DatasetDialog()
+        dialog.exec_()
+
+    def Slice_Dataset(self, _value=False):
+        dialog = Slice_dataset()
+        dialog.exec_()
+
+    def Concat_Dataset(self, _value=False):
+        dialog = Concat_dataset()
+        dialog.exec_()
+
     def resizeEvent(self, event):
         if (
-            self.canvas
-            and not self.image.isNull()
-            and self.zoomMode != self.MANUAL_ZOOM
+                self.canvas
+                and not self.image.isNull()
+                and self.zoomMode != self.MANUAL_ZOOM
         ):
             self.adjustScale()
         super(MainWindow, self).resizeEvent(event)
@@ -1788,7 +2556,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def openPrevImg(self, _value=False):
         keep_prev = self._config["keep_prev"]
         if QtWidgets.QApplication.keyboardModifiers() == (
-            Qt.ControlModifier | Qt.ShiftModifier
+                Qt.ControlModifier | Qt.ShiftModifier
         ):
             self._config["keep_prev"] = True
 
@@ -1812,7 +2580,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def openNextImg(self, _value=False, load=True):
         keep_prev = self._config["keep_prev"]
         if QtWidgets.QApplication.keyboardModifiers() == (
-            Qt.ControlModifier | Qt.ShiftModifier
+                Qt.ControlModifier | Qt.ShiftModifier
         ):
             self._config["keep_prev"] = True
 
@@ -2048,7 +2816,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "You are about to permanently delete {} polygons, " "proceed anyway?"
         ).format(len(self.canvas.selectedShapes))
         if yes == QtWidgets.QMessageBox.warning(
-            self, self.tr("Attention"), msg, yes | no, yes
+                self, self.tr("Attention"), msg, yes | no, yes
         ):
             self.remLabels(self.canvas.deleteSelected())
             self.setDirty()
@@ -2127,6 +2895,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def importDirImages(self, dirpath, pattern=None, load=True):
         self.actions.openNextImg.setEnabled(True)
         self.actions.openPrevImg.setEnabled(True)
+        self.actions.image_pass.setEnabled(True)
+        self.actions.image_unpass.setEnabled(True)
 
         if not self.mayContinue() or not dirpath:
             return

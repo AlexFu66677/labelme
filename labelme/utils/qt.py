@@ -1,12 +1,15 @@
 import os.path as osp
 from math import sqrt
-
+import sys
 import numpy as np
 from qtpy import QtCore
 from qtpy import QtGui
 from qtpy import QtWidgets
 
-here = osp.dirname(osp.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    here = osp.dirname(sys.executable)
+else:
+    here = osp.dirname(osp.abspath(__file__))
 
 
 def newIcon(icon):
