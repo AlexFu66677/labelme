@@ -5,6 +5,7 @@
 /*.egg-info/
 /labelme/ai/seg_model/*
 !/labelme/ai/seg_model/__init__.py
+!/labelme/ai/seg_model/vocab.txt
 *.py[cdo]
 
 .DS_Store

@@ -57,13 +57,13 @@ class SegmentAnythingModelVitH(SegmentAnythingModel):
         )
 
 class GroundDINO(SegmentAnythingModel):
-    name = "GroundDINO (accuracy)"
+    name = "GroundingDINO (accuracy)"
     config_path="",
-    model_path="./ai/seg_model/groundingdino.onnx"
+    model_path="./ai/seg_model/GroundingDINO_SwinT_OGC.onnx"
 class GroundDINO_INIT(SegmentAnythingModel):
     name = "NULL"
     config_path="",
-    model_path="./ai/seg_model/groundingdino.onnx"
+    model_path="./ai/seg_model/GroundingDINO_SwinT_OGC.onnx"
 MODELS = [
     SegmentAnythingModelVitB,
     SegmentAnythingModelVitL,
