@@ -137,7 +137,7 @@ def main():
     reset_config = config_from_args.pop("reset_config")
     filename = config_from_args.pop("filename")
     output = config_from_args.pop("output")
-    config = get_config( config_from_args=config_from_args)
+    config = get_config(config_from_args=config_from_args)
     if not config["labels"] and config["validate_label"]:
         logger.error(
             "--labels must be specified with --validatelabel or "

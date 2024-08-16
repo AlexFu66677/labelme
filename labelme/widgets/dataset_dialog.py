@@ -59,6 +59,11 @@ class DatasetDialog(QtWidgets.QDialog):
 
         layout.addLayout(value_layout)
 
+        self.label_sequence_name = QtWidgets.QLabel("Label Sequence:")
+        self.label_sequence = QtWidgets.QLineEdit()
+        layout.addWidget(self.label_sequence_name)
+        layout.addWidget(self.label_sequence)
+
         self.result_label = QtWidgets.QLabel("Result:")
         self.result_text_edit = QtWidgets.QTextEdit()
         self.result_text_edit.setReadOnly(True)
@@ -82,11 +87,12 @@ class DatasetDialog(QtWidgets.QDialog):
         value_data = [value_input.text() for value_input in self.value_inputs]
         type_data = self.type_combobox.currentText()
         if type_data=='coco':
-           result = dataset.CocoGenerator(folder_data, value_data)
+            result = dataset.CocoGenerator(folder_data, value_data)
         elif type_data=='yolo':
-           result =dataset.YoloGenerator(folder_data, value_data)
+            sequence=self.label_sequence.text()
+            result =dataset.YoloGenerator(folder_data, value_data, sequence)
         elif type_data == 'voc':
-           result = dataset.VocGenerator(folder_data, value_data)
+            result = dataset.VocGenerator(folder_data, value_data)
         #键值对
         # folder_data=['C:/Users/fjl\Desktop\data/anno', 'C:/Users/fjl/Desktop/data/img', 'C:/Users/fjl\Desktop\data']
         # value_data=[0.4,0.3,0.3]

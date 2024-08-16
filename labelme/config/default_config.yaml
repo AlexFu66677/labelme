@@ -97,6 +97,7 @@ shortcuts:
   video_object: null
   rotate: null
   dataset: null
+  yolo: null
   image_pass: null
   image_unpass: null
 

@@ -22,6 +22,7 @@ from labelme.widgets import Selectonnx
 from labelme.widgets import Slice_dataset
 from labelme.widgets import Concat_dataset
 from labelme.widgets import DatasetDialog
+from labelme.widgets import Yolo_Vis_Dialog
 
 import imgviz
 import natsort
@@ -298,6 +299,13 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["dataset"],
             "dataset",
             self.tr("数据集生成"),
+        )
+        yolovis = action(
+            self.tr("&yolo可视化"),
+            self.YOLO_VIS,
+            shortcuts["yolo"],
+            "yolovis",
+            self.tr("yolo可视化"),
         )
         slice_dataset = action(
             self.tr("&数据集分割"),
@@ -740,6 +748,7 @@ class MainWindow(QtWidgets.QMainWindow):
             dataset=dataset,
             slice_dataset=slice_dataset,
             concat_dataset=concat_dataset,
+            yolovis=yolovis,
             close=close,
             deleteFile=deleteFile,
             toggleKeepPrevMode=toggle_keep_prev_mode,
@@ -984,6 +993,7 @@ class MainWindow(QtWidgets.QMainWindow):
             dataset,
             slice_dataset,
             concat_dataset,
+            yolovis,
             None,
             image_pass,
             image_unpass,
@@ -2482,6 +2492,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def Dataset(self, _value=False):
         dialog = DatasetDialog()
+        dialog.exec_()
+
+    def YOLO_VIS(self, _value=False):
+        dialog = Yolo_Vis_Dialog()
         dialog.exec_()
 
     def Slice_Dataset(self, _value=False):
