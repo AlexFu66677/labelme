@@ -11,11 +11,23 @@ from . import _utils
 
 
 class SegmentAnythingModel:
-    def __init__(self, encoder_path, decoder_path):
+    def __init__(self, encoder_path, decoder_path,device):
         self._image_size = 1024
+        if device == "cpu":
+            self._encoder_session = onnxruntime.InferenceSession(encoder_path, providers=['CPUExecutionProvider'])
+            self._decoder_session = onnxruntime.InferenceSession(decoder_path, providers=['CPUExecutionProvider'])
+        elif device == "cuda":
+            self._encoder_session = onnxruntime.InferenceSession(encoder_path, providers=['CUDAExecutionProvider'])
+            self._decoder_session = onnxruntime.InferenceSession(decoder_path, providers=['CUDAExecutionProvider'])
+        else:
+            self.errorMessage(
+                self.tr("Invalid providers"),
+                self.tr("Invalid infer providers '{}'").format(
+                    self._config["device"]
+                ),
+            )
+            return False
 
-        self._encoder_session = onnxruntime.InferenceSession(encoder_path)
-        self._decoder_session = onnxruntime.InferenceSession(decoder_path)
 
         self._lock = threading.Lock()
         self._image_embedding_cache = collections.OrderedDict()
@@ -120,14 +132,14 @@ def _compute_image_embedding(image_size, encoder_session, image):
 
 
 def _compute_mask_from_points(
-    image_size, decoder_session, image, image_embedding, points, point_labels
+        image_size, decoder_session, image, image_embedding, points, point_labels
 ):
     input_point = np.array(points, dtype=np.float32)
     input_label = np.array(point_labels, dtype=np.int32)
 
     onnx_coord = np.concatenate([input_point, np.array([[0.0, 0.0]])], axis=0)[
-        None, :, :
-    ]
+                 None, :, :
+                 ]
     onnx_label = np.concatenate([input_label, np.array([-1])], axis=0)[None, :].astype(
         np.float32
     )
@@ -136,8 +148,8 @@ def _compute_mask_from_points(
         image_size=image_size, image=image
     )
     onnx_coord = (
-        onnx_coord.astype(float)
-        * (new_width / image.shape[1], new_height / image.shape[0])
+            onnx_coord.astype(float)
+            * (new_width / image.shape[1], new_height / image.shape[0])
     ).astype(np.float32)
 
     onnx_mask_input = np.zeros((1, 1, 256, 256), dtype=np.float32)

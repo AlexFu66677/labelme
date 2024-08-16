@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--reset-config", action="store_true", help="reset qt config")
     parser.add_argument(
         "--logger-level",
-        default="debug",
+        default="error",
         choices=["debug", "info", "warning", "fatal", "error"],
         help="logger level",
     )
@@ -42,7 +42,7 @@ def main():
         help="config file or yaml-format string (default: {})".format(
             default_config_file
         ),
-        default=default_config_file,
+        default="./config/default_config.yaml",
     )
     # config for the gui
     parser.add_argument(
@@ -137,9 +137,7 @@ def main():
     reset_config = config_from_args.pop("reset_config")
     filename = config_from_args.pop("filename")
     output = config_from_args.pop("output")
-    config_file_or_yaml = config_from_args.pop("config")
-    config = get_config(config_file_or_yaml, config_from_args)
-
+    config = get_config( config_from_args=config_from_args)
     if not config["labels"] and config["validate_label"]:
         logger.error(
             "--labels must be specified with --validatelabel or "

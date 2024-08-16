@@ -11,9 +11,21 @@ from . import _utils
 
 
 class EfficientSam:
-    def __init__(self, encoder_path, decoder_path):
-        self._encoder_session = onnxruntime.InferenceSession(encoder_path)
-        self._decoder_session = onnxruntime.InferenceSession(decoder_path)
+    def __init__(self, encoder_path, decoder_path,device):
+        if device == "cpu":
+            self._encoder_session = onnxruntime.InferenceSession(encoder_path, providers=['CPUExecutionProvider'])
+            self._decoder_session = onnxruntime.InferenceSession(decoder_path, providers=['CPUExecutionProvider'])
+        elif device == "cuda":
+            self._encoder_session = onnxruntime.InferenceSession(encoder_path, providers=['CUDAExecutionProvider'])
+            self._decoder_session = onnxruntime.InferenceSession(decoder_path, providers=['CUDAExecutionProvider'])
+        else:
+            self.errorMessage(
+                self.tr("Invalid providers"),
+                self.tr("Invalid infer providers '{}'").format(
+                    self._config["device"]
+                ),
+            )
+            return False
 
         self._lock = threading.Lock()
         self._image_embedding_cache = collections.OrderedDict()

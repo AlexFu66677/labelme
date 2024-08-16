@@ -86,7 +86,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if config is None:
             config = get_config()
         self._config = config
-
+        self.device = self._config["device"]
         # set default shape colors
         Shape.line_color = QtGui.QColor(*self._config["shape"]["line_color"])
         Shape.fill_color = QtGui.QColor(*self._config["shape"]["fill_color"])
@@ -464,7 +464,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         createAiPolygonMode.changed.connect(
             lambda: self.canvas.initializeAiModel(
-                name=self._selectAiModelComboBox.currentText()
+                name=self._selectAiModelComboBox.currentText(),
+                device=self.device
             )
             if self.canvas.createMode == "ai_polygon"
             else None
@@ -479,7 +480,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         createAiMaskMode.changed.connect(
             lambda: self.canvas.initializeAiModel(
-                name=self._selectAiModelComboBox.currentText()
+                name=self._selectAiModelComboBox.currentText(),
+                device=self.device
             )
             if self.canvas.createMode == "ai_mask"
             else None
@@ -902,15 +904,20 @@ class MainWindow(QtWidgets.QMainWindow):
         selectAiText2LabelModel.defaultWidget().layout().addWidget(self._selectAiText2LabelModelComboBox)
         text2label_model_names = [model.name for model in Text2LabelMODELS]
         self._selectAiText2LabelModelComboBox.addItems(text2label_model_names)
-        #禁止自动加载模型 提升软件整体初始化速度
+        # 禁止自动加载模型 提升软件整体初始化速度
+        text_model_index = 0
+
         if self._config["ai"]["text_default"] in text2label_model_names:
             text_model_index = text2label_model_names.index(self._config["ai"]["text_default"])
         self._selectAiText2LabelModelComboBox.setCurrentIndex(text_model_index)
-        self.init_text2lable_model(Text2LabelMODELS[text_model_index].config_path,Text2LabelMODELS[text_model_index].model_path)
+        self.init_text2lable_model(Text2LabelMODELS[text_model_index].config_path,
+                                   Text2LabelMODELS[text_model_index].model_path,self.device)
         self._selectAiText2LabelModelComboBox.currentIndexChanged.connect(
             lambda: self.init_text2lable_model(
-                Text2LabelMODELS[text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].config_path,
-                Text2LabelMODELS[text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].model_path
+                Text2LabelMODELS[
+                    text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].config_path,
+                Text2LabelMODELS[
+                    text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].model_path,self.device
                 # "D:\code\Grounded-Segment-Anything\GroundingDINO\groundingdino\config\GroundingDINO_SwinT_OGC.py",
                 # "D:\code\Grounded-Segment-Anything\groundingdino_swint_ogc.pth"
                 # name=self._selectAiText2LabelModelComboBox.currentText()
@@ -957,7 +964,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._selectAiModelComboBox.setCurrentIndex(model_index)
         self._selectAiModelComboBox.currentIndexChanged.connect(
             lambda: self.canvas.initializeAiModel(
-                name=self._selectAiModelComboBox.currentText()
+                name=self._selectAiModelComboBox.currentText(),
+                device=self.device
             )
             if self.canvas.createMode in ["ai_polygon", "ai_mask"]
             else None
@@ -1055,6 +1063,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.onnx_path = ''
         self.net = None
         self.label_list = {}
+
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
         self.restoreState(state)
@@ -1638,20 +1647,23 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.label_list:
                 data = dict(
                     label=self.label_list[s[0]],
-                    points=[(p[0], p[1]) for p in s[1:5]],
-                    group_id=None,
-                    description="",
+                    points=[[p[0], p[1]] for p in s[1:5]],
                     shape_type="rectangle",
                     flags={},
+                    description="",
+                    group_id=None,
+                    mask=None,
+
                 )
             else:
                 data = dict(
                     label=s[0],
-                    points=[(p[0], p[1]) for p in s[1:5]],
-                    group_id=None,
-                    description="",
+                    points=[[p[0], p[1]] for p in s[1:5]],
                     shape_type="rectangle",
                     flags={},
+                    description="",
+                    group_id=None,
+                    mask=None,
                 )
             return data
 
@@ -1664,9 +1676,13 @@ class MainWindow(QtWidgets.QMainWindow):
             flags[key] = flag
         try:
             if self.labelFile:
+                if self.labelFile.shapes:
                 # 如果不为空，将新 shapes 追加到现有的 shapes 中
-                existing_shapes = self.labelFile.shapes
-                shapes = existing_shapes + shapes
+                    existing_shapes = self.labelFile.shapes
+                    for existing_shape in existing_shapes:
+                        if existing_shape['mask'] is not None:
+                            existing_shape['mask'] = utils.img_arr_to_b64(existing_shape['mask'].astype(np.uint8))
+                    shapes = existing_shapes + shapes
 
             imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
             imageData = self.imageData if self._config["store_data"] else None
@@ -2114,25 +2130,26 @@ class MainWindow(QtWidgets.QMainWindow):
                                                    options=options)
         self.onnx_path = file_name
         so = ort.SessionOptions()
-        so.log_severity_level = 3
-        self.net = ort.InferenceSession(self.onnx_path, so)
+        so.log_severity_level = 4
+        if self.device=="cpu":
+            self.net = ort.InferenceSession(self.onnx_path, so, providers=['CPUExecutionProvider'])
+        elif self.device == "cuda":
+            self.net = ort.InferenceSession(self.onnx_path, so, providers=['CUDAExecutionProvider'])
+        else:
+                self.errorMessage(
+                    self.tr("Invalid providers"),
+                    self.tr("Invalid infer providers '{}'").format(
+                        self._config["device"]
+                    ),
+                )
+                return False
         self.actions.object.setEnabled(True)
         self.actions.rotate.setEnabled(False)
 
     # D:\code\Grounded-Segment-Anything\GroundingDINO\groundingdino\config\GroundingDINO_SwinT_OGC.py
     # D:\code\Grounded-Segment-Anything\groundingdino_swint_ogc.pth
-    def init_text2lable_model(self, config_path,model_path,_value=False):
-        # args = SLConfig.fromfile(config_path[0])
-        # args.device = "cuda"
-        # self.text2label_model = build_model(args)
-        # checkpoint = torch.load(str(model_path), map_location="cuda")
-        # self.text2label_model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-        # self.text2label_model.eval()
-        # self.actions.object.setEnabled(True)
-        # self.actions.rotate.setEnabled(False)
-
-        self.text2label_model = GroundingDINO(model_path, 0.3, "./ai/seg_model/vocab.txt", 0.25)
-        self.actions.object.setEnabled(True)
+    def init_text2lable_model(self, config_path, model_path, device, _value=False):
+        self.text2label_model = GroundingDINO(model_path, 0.3, "./ai/seg_model/vocab.txt", device, 0.25)
         self.actions.rotate.setEnabled(False)
         return self.text2label_model
 

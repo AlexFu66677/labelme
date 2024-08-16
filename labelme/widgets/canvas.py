@@ -128,7 +128,7 @@ class Canvas(QtWidgets.QWidget):
             raise ValueError("Unsupported createMode: %s" % value)
         self._createMode = value
 
-    def initializeAiModel(self, name):
+    def initializeAiModel(self, name,device):
         if name not in [model.name for model in labelme.ai.MODELS]:
             raise ValueError("Unsupported ai model: %s" % name)
         model = [model for model in labelme.ai.MODELS if model.name == name][0]
@@ -137,7 +137,7 @@ class Canvas(QtWidgets.QWidget):
             logger.debug("AI model is already initialized: %r" % model.name)
         else:
             logger.debug("Initializing AI model: %r" % model.name)
-            self._ai_model = model()
+            self._ai_model = model(device)
 
         if self.pixmap is None:
             logger.warning("Pixmap is not set yet")

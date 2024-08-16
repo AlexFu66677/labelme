@@ -54,15 +54,21 @@ def get_phrases_from_posmap(posmap, input_ids, tokenizer, left_idx=0, right_idx=
 
 
 class GroundingDINO():
-    def __init__(self, modelpath, box_threshold, vocab_path, text_threshold=None, with_logits=True):
+    def __init__(self, modelpath, box_threshold, vocab_path,device, text_threshold=None, with_logits=True):
         so = onnxruntime.SessionOptions()
         so.log_severity_level = 4
-        self.net = onnxruntime.InferenceSession(modelpath, so, providers=['CUDAExecutionProvider'])  ###opencv-dnn读取失败
-        # for inp in self.net.get_inputs():
-        #     print(inp)
-        # for oup in self.net.get_outputs():
-        #     print(oup)
-
+        if device == "cpu":
+            self.net = onnxruntime.InferenceSession(modelpath, so, providers=['CPUExecutionProvider'])
+        elif device == "cuda":
+            self.net = onnxruntime.InferenceSession(modelpath, so, providers=['CUDAExecutionProvider'])
+        else:
+            self.errorMessage(
+                self.tr("Invalid providers"),
+                self.tr("Invalid infer providers '{}'").format(
+                    self._config["device"]
+                ),
+            )
+            return False
         self.input_names = ["img", "input_ids", "attention_mask", "position_ids", "token_type_ids", "text_token_mask"]
         self.output_names = ["logits", "boxes"]
         self.box_threshold = box_threshold
