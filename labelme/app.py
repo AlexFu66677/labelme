@@ -944,6 +944,8 @@ class MainWindow(QtWidgets.QMainWindow):
         Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_Text)
         Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_detect_button)
         self.Text2Label_detect_button.clicked.connect(self.Run_Text2Label)
+        Text2Label_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcuts["Text2Label"]), self)
+        Text2Label_shortcut.activated.connect(self.Text2Label_detect_button.click)
         # self.Text2Label_detect_button.clicked.connect(self.run_text2label)
         # self.Text2Label_input.setDefaultWidget(QtWidgets.QWidget())
         # self.Text2Label_detect_button.setDefaultWidget(QtWidgets.QWidget())
