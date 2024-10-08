@@ -78,6 +78,11 @@ class DatasetDialog(QtWidgets.QDialog):
 
         self.setLayout(layout)
 
+    def errorMessage(self, title, message):
+        return QtWidgets.QMessageBox.critical(
+            self, title, "<p><b>%s</b></p>%s" % (title, message)
+        )
+
     def select_folder(self, index):
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:

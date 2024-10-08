@@ -190,7 +190,9 @@ class Shape(object):
                 if self.selected
                 else self.fill_color.getRgb()
             )
-            image_to_draw[self.mask] = fill_color
+            alpha = 64  # 半透明
+            fill_color_with_alpha = (fill_color[0], fill_color[1], fill_color[2], alpha)
+            image_to_draw[self.mask] = fill_color_with_alpha
             qimage = QtGui.QImage.fromData(labelme.utils.img_arr_to_data(image_to_draw))
             painter.drawImage(
                 int(round(self.points[0].x())),

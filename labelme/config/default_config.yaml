@@ -33,7 +33,7 @@ shape:
 
 ai:
   default: 'EfficientSam (accuracy)'
-  text_default: 'GroundingDINO (accuracy)'
+  text_default: 'NULL'
 # main
 flag_dock:
   show: true
@@ -98,7 +98,7 @@ shortcuts:
   rotate: null
   dataset: null
   yolo: null
-  image_pass: null
+  image_pass: S
   image_unpass: null
 
   open_next: [D, Ctrl+Shift+D]
@@ -116,7 +116,7 @@ shortcuts:
   create_line: null
   create_point: null
   create_linestrip: null
-  edit_polygon: Ctrl+J
+  edit_polygon: B
   delete_polygon: Delete
   duplicate_polygon: Ctrl+D
   copy_polygon: Ctrl+C
@@ -132,3 +132,4 @@ shortcuts:
   hide_all_polygons: null
   toggle_all_polygons: T
   Text2Label: F
+  video_slice: null

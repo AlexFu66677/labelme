@@ -23,6 +23,7 @@ from labelme.widgets import Slice_dataset
 from labelme.widgets import Concat_dataset
 from labelme.widgets import DatasetDialog
 from labelme.widgets import Yolo_Vis_Dialog
+from labelme.widgets import Video_slice_Dialog
 
 import imgviz
 import natsort
@@ -302,10 +303,17 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         yolovis = action(
             self.tr("&yolo可视化"),
-            self.YOLO_VIS,
+            self.Yolovis,
             shortcuts["yolo"],
             "yolovis",
             self.tr("yolo可视化"),
+        )
+        video_slice = action(
+            self.tr("&视频切分"),
+            self.Video_slice,
+            shortcuts["video_slice"],
+            "video_slice",
+            self.tr("视频切分"),
         )
         slice_dataset = action(
             self.tr("&数据集分割"),
@@ -749,6 +757,7 @@ class MainWindow(QtWidgets.QMainWindow):
             slice_dataset=slice_dataset,
             concat_dataset=concat_dataset,
             yolovis=yolovis,
+            video_slice=video_slice,
             close=close,
             deleteFile=deleteFile,
             toggleKeepPrevMode=toggle_keep_prev_mode,
@@ -919,8 +928,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._config["ai"]["text_default"] in text2label_model_names:
             text_model_index = text2label_model_names.index(self._config["ai"]["text_default"])
         self._selectAiText2LabelModelComboBox.setCurrentIndex(text_model_index)
-        self.init_text2lable_model(Text2LabelMODELS[text_model_index].config_path,
-                                   Text2LabelMODELS[text_model_index].model_path,self.device)
+        # self.init_text2lable_model(Text2LabelMODELS[text_model_index].config_path,
+        #                            Text2LabelMODELS[text_model_index].model_path,self.device)
         self._selectAiText2LabelModelComboBox.currentIndexChanged.connect(
             lambda: self.init_text2lable_model(
                 Text2LabelMODELS[
@@ -996,6 +1005,7 @@ class MainWindow(QtWidgets.QMainWindow):
             slice_dataset,
             concat_dataset,
             yolovis,
+            video_slice,
             None,
             image_pass,
             image_unpass,
@@ -1546,6 +1556,8 @@ class MainWindow(QtWidgets.QMainWindow):
             points = shape["points"]
             shape_type = shape["shape_type"]
             flags = shape["flags"]
+            if flags == None:
+                flags = {}
             description = shape.get("description", "")
             group_id = shape["group_id"]
             other_data = shape["other_data"]
@@ -1646,7 +1658,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def save_AI_Labels(self, filename, res, imagePass=None):
         lf = LabelFile()
-
+        self.setDirty()
+        self.loadFile(self.filename)
         def format_shape(s):
             # doc = {}
             # doc[0] = 'people'
@@ -1656,7 +1669,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # doc[4] = 'cone'
             # doc[5] = 'pipeline'
             # doc[6] = 'tank'
-            if self.label_list:
+            if self.label_list and (type(s[0]) != type('1')):
                 data = dict(
                     label=self.label_list[s[0]],
                     points=[[p[0], p[1]] for p in s[1:5]],
@@ -1667,7 +1680,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     mask=None,
 
                 )
-            else:
+            elif type(s[0]) == type('1'):
                 data = dict(
                     label=s[0],
                     points=[[p[0], p[1]] for p in s[1:5]],
@@ -2141,6 +2154,14 @@ class MainWindow(QtWidgets.QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(self, 'Select ONNX File', '', 'ONNX Files (*.onnx);;All Files (*)',
                                                    options=options)
         self.onnx_path = file_name
+        if not self.onnx_path:
+            self.errorMessage(
+                self.tr("Invalid onnxfile"),
+                self.tr("Invalid onnxfile '{}'").format(
+                    self.onnx_path
+                ),
+            )
+            return False
         so = ort.SessionOptions()
         so.log_severity_level = 4
         if self.device=="cpu":
@@ -2161,6 +2182,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # D:\code\Grounded-Segment-Anything\GroundingDINO\groundingdino\config\GroundingDINO_SwinT_OGC.py
     # D:\code\Grounded-Segment-Anything\groundingdino_swint_ogc.pth
     def init_text2lable_model(self, config_path, model_path, device, _value=False):
+        if not model_path:
+            self.errorMessage(
+                self.tr("Invalid model_path"),
+                self.tr("Invalid model_path '{}'").format(
+                    model_path
+                ),
+            )
+            return False
         self.text2label_model = GroundingDINO(model_path, 0.3, "./ai/seg_model/vocab.txt", device, 0.25)
         self.actions.rotate.setEnabled(False)
         return self.text2label_model
@@ -2351,6 +2380,8 @@ class MainWindow(QtWidgets.QMainWindow):
         result = nms(pred, 0.4, 0.45)
         for detection in result:
             xmin, ymin, xmax, ymax, score, class_id = detection
+            ymin = ymin + 2
+            xmin = xmin + 1
 
             detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
                       int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
@@ -2496,8 +2527,12 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog = DatasetDialog()
         dialog.exec_()
 
-    def YOLO_VIS(self, _value=False):
+    def Yolovis(self, _value=False):
         dialog = Yolo_Vis_Dialog()
+        dialog.exec_()
+
+    def Video_slice(self, _value=False):
+        dialog = Video_slice_Dialog()
         dialog.exec_()
 
     def Slice_Dataset(self, _value=False):
@@ -2767,12 +2802,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def deleteFile(self):
         mb = QtWidgets.QMessageBox
-        msg = self.tr(
-            "You are about to permanently delete this label file, " "proceed anyway?"
-        )
-        answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
-        if answer != mb.Yes:
-            return
+        # msg = self.tr(
+        #     "You are about to permanently delete this label file, " "proceed anyway?"
+        # )
+        # answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
+        # if answer != mb.Yes:
+        #     return
 
         label_file = self.getLabelFile()
         if osp.exists(label_file):
@@ -2781,8 +2816,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
             item = self.fileListWidget.currentItem()
             item.setCheckState(Qt.Unchecked)
-
-            self.resetState()
+            self.labelList.clear()
+            # self.filename = None
+            self.imagePath = None
+            self.imageData = None
+            self.labelFile = None
+            self.otherData = None
+            self.tmpimageData = None
+            self.rotatevalue = None
+            self.imagePass = None
+            self.QCResult.setText(None)
+            self.canvas.resetState()
+            # self.resetState()
 
     # Message Dialogs. #
     def hasLabels(self):
@@ -2844,13 +2889,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setDirty()
 
     def deleteSelectedShape(self):
-        yes, no = QtWidgets.QMessageBox.Yes, QtWidgets.QMessageBox.No
-        msg = self.tr(
-            "You are about to permanently delete {} polygons, " "proceed anyway?"
-        ).format(len(self.canvas.selectedShapes))
-        if yes == QtWidgets.QMessageBox.warning(
-                self, self.tr("Attention"), msg, yes | no, yes
-        ):
+        # yes, no = QtWidgets.QMessageBox.Yes, QtWidgets.QMessageBox.No
+        # msg = self.tr(
+        #     "You are about to permanently delete {} polygons, " "proceed anyway?"
+        # ).format(len(self.canvas.selectedShapes))
+        # if yes == QtWidgets.QMessageBox.warning(
+        #         self, self.tr("Attention"), msg, yes | no, yes
+        # ):
             self.remLabels(self.canvas.deleteSelected())
             self.setDirty()
             if self.noShapes():

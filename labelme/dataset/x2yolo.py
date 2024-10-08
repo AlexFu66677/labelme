@@ -10,8 +10,8 @@ from qtpy import QtWidgets
 def convert(img_size, box):
     dw = 1. / img_size[0]
     dh = 1. / img_size[1]
-    x = (box[0] + box[2]) / 2.0 - 1
-    y = (box[1] + box[3]) / 2.0 - 1
+    x = (box[0] + box[2]) / 2.0
+    y = (box[1] + box[3]) / 2.0
     w = abs(box[2] - box[0])
     h = abs(box[3] - box[1])
     x = x * dw
@@ -19,6 +19,7 @@ def convert(img_size, box):
     y = y * dh
     h = h * dh
     return (x, y, w, h)
+
 
 
 def decode_json(json_path, output_dir, name_list, res, sequence=None):
@@ -54,10 +55,10 @@ def decode_json(json_path, output_dir, name_list, res, sequence=None):
             bbox = convert((img_w, img_h), points)
             file.write(str(name_list[label_name]) + " " + " ".join([str(point) for point in bbox]) + '\n')
         else:
-            return 'only support rectangle, nonsupport other shape_type'
+            return f"Image '{json_path}' not support {image['shape_type']}"
     file.close()
-    res.append(('Generating dataset from:' + json_path))
-    return res
+    # res.append(('Generating dataset from:' + json_path))
+    return 'over'
 
 
 def show_error_message(error_message):
@@ -177,6 +178,8 @@ def YoloGenerator(folder_data, value_data, sequence=None):
             train_json_name = osp.join(json_input_dir, json_file_name + '.json')
             train_label_output = osp.join(train_label_out_dir, json_file_name + '.txt')
             res = decode_json(train_json_name, train_label_output, name_list, res, sequence)
+            if res!="over":
+                return res
 
     if val_proportion != 0:
         val_image_names = os.listdir(val_image_out_dir)
@@ -185,6 +188,8 @@ def YoloGenerator(folder_data, value_data, sequence=None):
             val_json_name = osp.join(json_input_dir, json_file_name + '.json')
             val_label_output = osp.join(val_label_out_dir, json_file_name + '.txt')
             res = decode_json(val_json_name, val_label_output, name_list, res, sequence)
+            if res!="over":
+                return res
 
     if test_proportion != 0:
         test_image_names = os.listdir(test_image_out_dir)
@@ -193,10 +198,13 @@ def YoloGenerator(folder_data, value_data, sequence=None):
             test_json_name = osp.join(json_input_dir, json_file_name + '.json')
             test_label_output = osp.join(test_label_out_dir, json_file_name + '.txt')
             res = decode_json(test_json_name, test_label_output, name_list, res, sequence)
+            if res!="over":
+                return res
 
-    for i in range(len(res)):
-        res_str = res_str + '\n' + str(res[i])
-    return res_str
+    # for i in range(len(res)):
+    #     res_str = res_str + '\n' + str(res[i])
+    # return res_str
+    return res
 
 # Usage example
 # app = QtWidgets.QApplication([])  # This is needed to create a QApplication context

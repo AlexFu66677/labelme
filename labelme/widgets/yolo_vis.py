@@ -1,11 +1,13 @@
 from qtpy import QtWidgets, QtGui, QtCore
 import os
+import random
 
 class Yolo_Vis_Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Dataset")
 
+        self.default_image_size = 640  # Default size for the longest side
         self.folder_labels = []
         self.folder_inputs = []
         layout = QtWidgets.QVBoxLayout()
@@ -38,9 +40,25 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
 
         layout.addLayout(navigation_layout)
 
-        # Add a label to show the images with fixed size 640x640
+        # Add image size input field and current image name label
+        size_layout = QtWidgets.QHBoxLayout()
+        size_input_label = QtWidgets.QLabel("Image Size:")
+        self.size_input = QtWidgets.QLineEdit(str(self.default_image_size))
+        self.size_input.setValidator(QtGui.QIntValidator(1, 4096))  # Allow valid size range from 1 to 4096
+        size_layout.addWidget(size_input_label)
+        size_layout.addWidget(self.size_input)
+
+        self.image_name_label = QtWidgets.QLabel("No image loaded")
+        size_layout.addWidget(self.image_name_label)
+
+        layout.addLayout(size_layout)
+
+        # Add checkbox for random order
+        self.random_order_checkbox = QtWidgets.QCheckBox("Random Order")
+        layout.addWidget(self.random_order_checkbox)
+
+        # Add a label to show the images
         self.image_label = QtWidgets.QLabel()
-        self.image_label.setFixedSize(640, 640)
         self.image_label.setStyleSheet("background-color: white;")
         layout.addWidget(self.image_label)
 
@@ -54,15 +72,6 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
         self.image_paths = []
         self.current_index = 0
 
-        # Define a simple class-to-label mapping (customize as needed)
-        # self.class_labels = {
-        #     0: 'Class1',
-        #     1: 'Class2',
-        #     2: 'Class3',
-        #     # Add more mappings as needed
-        # }
-
-        # Key press event
         self.shortcut_prev = QtWidgets.QShortcut(QtGui.QKeySequence("A"), self)
         self.shortcut_prev.activated.connect(self.show_prev_image)
         self.shortcut_next = QtWidgets.QShortcut(QtGui.QKeySequence("D"), self)
@@ -76,10 +85,14 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
     def start(self):
         image_folder = self.folder_inputs[1].text()
         if os.path.exists(image_folder):
-            self.image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.jpg') or f.endswith('.png')]
-            self.image_paths.sort()
+            self.image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.jpg') or f.endswith('.png') or f.endswith('.bmp')]
+            if self.random_order_checkbox.isChecked():
+                random.shuffle(self.image_paths)
+            else:
+                self.image_paths.sort()
             self.current_index = 0
             if self.image_paths:
+                self.update_image_size()
                 self.display_image_with_annotations(self.image_paths[self.current_index])
 
     def show_prev_image(self):
@@ -92,22 +105,39 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
             self.current_index = (self.current_index + 1) % len(self.image_paths)
             self.display_image_with_annotations(self.image_paths[self.current_index])
 
+    def update_image_size(self):
+        # This function is called to update the size of the image display based on the input value
+        self.max_size = int(self.size_input.text())
+
     def display_image_with_annotations(self, image_path):
         # Load the image
         pixmap = QtGui.QPixmap(image_path)
+        img_width = pixmap.width()
+        img_height = pixmap.height()
 
-        # Scale the image to fit 640x640 while keeping aspect ratio
-        target_size = QtCore.QSize(640, 640)
-        scaled_pixmap = pixmap.scaled(target_size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        # Update image name label
+        self.image_name_label.setText(os.path.basename(image_path))
 
-        # Create a white background image of 640x640
-        result_pixmap = QtGui.QPixmap(640, 640)
+        # Determine the scaling factor based on the max size input
+        if img_width > img_height:
+            scale_factor = self.max_size / img_width
+        else:
+            scale_factor = self.max_size / img_height
+
+        new_width = int(img_width * scale_factor)
+        new_height = int(img_height * scale_factor)
+
+        # Scale the image to fit the new dimensions while keeping aspect ratio
+        scaled_pixmap = pixmap.scaled(new_width, new_height, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+
+        # Create a white background image with the new dimensions
+        result_pixmap = QtGui.QPixmap(new_width, new_height)
         result_pixmap.fill(QtCore.Qt.white)
 
-        # Calculate position to center the scaled image
+        # Center the scaled image
         painter = QtGui.QPainter(result_pixmap)
-        x_offset = (640 - scaled_pixmap.width()) // 2
-        y_offset = (640 - scaled_pixmap.height()) // 2
+        x_offset = (new_width - scaled_pixmap.width()) // 2
+        y_offset = (new_height - scaled_pixmap.height()) // 2
         painter.drawPixmap(x_offset, y_offset, scaled_pixmap)
 
         # Get the corresponding label file
@@ -128,20 +158,17 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
                 for line in f:
                     cls, x_center, y_center, width, height = map(float, line.split())
                     cls = int(cls)  # Ensure the class label is an integer
-                    # label = self.class_labels.get(cls, f"Class{cls}")  # Get the label name
                     label = cls
-                    image_width = scaled_pixmap.width()
-                    image_height = scaled_pixmap.height()
-                    x_center *= image_width
-                    y_center *= image_height
-                    width *= image_width
-                    height *= image_height
+                    x_center *= scaled_pixmap.width()
+                    y_center *= scaled_pixmap.height()
+                    width *= scaled_pixmap.width()
+                    height *= scaled_pixmap.height()
 
                     # Calculate the bounding box coordinates
-                    x1 = int(x_center - width / 2 + x_offset)
-                    y1 = int(y_center - height / 2 + y_offset)
-                    x2 = int(x_center + width / 2 + x_offset)
-                    y2 = int(y_center + height / 2 + y_offset)
+                    x1 = int(x_center - width / 2)
+                    y1 = int(y_center - height / 2)
+                    x2 = int(x_center + width / 2)
+                    y2 = int(y_center + height / 2)
 
                     # Draw the bounding box
                     painter.drawRect(x1, y1, x2 - x1, y2 - y1)
@@ -153,4 +180,5 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
 
         # Display the image with annotations
         self.image_label.setPixmap(result_pixmap)
+        self.image_label.setFixedSize(new_width, new_height)
         self.image_label.adjustSize()

@@ -155,17 +155,17 @@ class GroundingDINO():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str,
-                        default="D:\code\GroundingDINO-onnxrun-main\GroundingDINO-onnxrun-main\python/groundingdino.onnx",
+                        default="D:/code/labelme_sam/labelme/ai/seg_model/GroundingDINO_SwinT_OGC.onnx",
                         help="onnx model path")
-    parser.add_argument("--image_path", type=str, default="F:\G950\ob/res/20190925_101846_1_1_0395.jpg",
+    parser.add_argument("--image_path", type=str, default="C:/Users/fjl\Desktop/test/0000003_00231_d_0000016.jpg",
                         help="path to image file")
-    parser.add_argument("--text_prompt", type=str, default="drone . ",
+    parser.add_argument("--text_prompt", type=str, default="tree . ",
                         help="text prompt, 每个类别名称之间以 . 隔开")  ###cat_dog.jpeg的提示词:"chair . person . dog .""     demo7.jpg的提示词:"Horse . Clouds . Grasses . Sky . Hill ."
     parser.add_argument("--box_threshold", type=float, default=0.3, help="box threshold")
     parser.add_argument("--text_threshold", type=float, default=0.25, help="text threshold")
     args = parser.parse_args()
 
-    mynet = GroundingDINO(args.model_path, args.box_threshold, "vocab.txt", text_threshold=args.text_threshold)
+    mynet = GroundingDINO(args.model_path, args.box_threshold, "D:\code\labelme_sam\labelme/ai\seg_model/vocab.txt", "cpu",text_threshold=args.text_threshold)
     srcimg = cv2.imread(args.image_path)
 
     boxes_filt, pred_phrases = mynet.detect(srcimg, args.text_prompt)

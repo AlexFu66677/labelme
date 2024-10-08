@@ -61,14 +61,20 @@ class SegmentAnythingModelVitH(SegmentAnythingModel):
             device=device,
         )
 
-class GroundDINO(SegmentAnythingModel):
+class GroundDINO_A(SegmentAnythingModel):
     name = "GroundingDINO (accuracy)"
     config_path="",
     model_path="./ai/seg_model/GroundingDINO_SwinT_OGC.onnx"
+
+class GroundDINO_B(SegmentAnythingModel):
+    name = "GroundingDINO (blance)"
+    config_path="",
+    model_path="./ai/seg_model/groundingdino_swinb_cogcoor_quant.onnx"
+
 class GroundDINO_INIT(SegmentAnythingModel):
     name = "NULL"
     config_path="",
-    model_path="./ai/seg_model/GroundingDINO_SwinT_OGC.onnx"
+    model_path=""
 MODELS = [
     SegmentAnythingModelVitB,
     SegmentAnythingModelVitL,
@@ -78,6 +84,7 @@ MODELS = [
 ]
 Text2LabelMODELS = [
     GroundDINO_INIT,
-    GroundDINO,
+    GroundDINO_A,
+    GroundDINO_B
 
 ]
