@@ -912,65 +912,99 @@ class MainWindow(QtWidgets.QMainWindow):
             ),
         )
         self.text2label_model = None
-        selectAiText2LabelModel = QtWidgets.QWidgetAction(self)
-        selectAiText2LabelModel.setDefaultWidget(QtWidgets.QWidget())
-        selectAiText2LabelModel.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        selectAiText2LabelModelLabel = QtWidgets.QLabel(self.tr("DINO"))
+
+        self.check_all_infer = QtWidgets.QCheckBox("推理全部图像", self)
+        self.check_save_existing_label = QtWidgets.QCheckBox("保存已有标签", self)
+        Check_AI_config_layout = QtWidgets.QWidgetAction(self)
+        Check_AI_config_layout.setDefaultWidget(QtWidgets.QWidget())
+        Check_AI_config_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        Check_AI_config_layout.defaultWidget().layout().addWidget(self.check_all_infer)
+        Check_AI_config_layout.defaultWidget().layout().addWidget(self.check_save_existing_label)
+
+        # 创建一个主widget和布局
+        selectAiWidget = QtWidgets.QWidget()
+        selectAiLayout = QtWidgets.QVBoxLayout(selectAiWidget)
+
+        # 第一个 "DINO" 部分
+        selectAiText2LabelModelLabel = QtWidgets.QLabel(self.tr("DINO:"))
         selectAiText2LabelModelLabel.setAlignment(QtCore.Qt.AlignCenter)
-        selectAiText2LabelModel.defaultWidget().layout().addWidget(selectAiText2LabelModelLabel)
         self._selectAiText2LabelModelComboBox = QtWidgets.QComboBox()
-        selectAiText2LabelModel.defaultWidget().layout().addWidget(self._selectAiText2LabelModelComboBox)
+
+        # 创建第一个部分的布局
+        text2LabelLayout = QtWidgets.QHBoxLayout()
+        text2LabelLayout.addWidget(selectAiText2LabelModelLabel)
+        text2LabelLayout.addWidget(self._selectAiText2LabelModelComboBox)
+
+        # 添加第一个部分到主布局
+        selectAiLayout.addLayout(text2LabelLayout)
+
+        # 第二个 "SAM" 部分
+        selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM:"))
+        selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
+        self._selectAiModelComboBox = QtWidgets.QComboBox()
+
+        # 创建第二个部分的布局
+        aiModelLayout = QtWidgets.QHBoxLayout()
+        aiModelLayout.addWidget(selectAiModelLabel)
+        aiModelLayout.addWidget(self._selectAiModelComboBox)
+
+        # 添加第二个部分到主布局
+        selectAiLayout.addLayout(aiModelLayout)
+
+        # 设置整体布局
+        selectAiModel = QtWidgets.QWidgetAction(self)
+        selectAiModel.setDefaultWidget(selectAiWidget)
+
+
+        # selectAiText2LabelModel = QtWidgets.QWidgetAction(self)
+        # selectAiText2LabelModel.setDefaultWidget(QtWidgets.QWidget())
+        # selectAiText2LabelModel.defaultWidget().setLayout(QtWidgets.QHBoxLayout())
+        # selectAiText2LabelModelLabel = QtWidgets.QLabel(self.tr("DINO:"))
+        # selectAiText2LabelModelLabel.setAlignment(QtCore.Qt.AlignCenter)
+        # selectAiText2LabelModel.defaultWidget().layout().addWidget(selectAiText2LabelModelLabel)
+        # self._selectAiText2LabelModelComboBox = QtWidgets.QComboBox()
+        # selectAiText2LabelModel.defaultWidget().layout().addWidget(self._selectAiText2LabelModelComboBox)
+        #
+        # selectAiModel = QtWidgets.QWidgetAction(self)
+        # selectAiModel.setDefaultWidget(QtWidgets.QWidget())
+        # selectAiModel.defaultWidget().setLayout(QtWidgets.QHBoxLayout())
+        # selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM:"))
+        # selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
+        # selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
+        # self._selectAiModelComboBox = QtWidgets.QComboBox()
+        # selectAiModel.defaultWidget().layout().addWidget(self._selectAiModelComboBox)
+
+
+
         text2label_model_names = [model.name for model in Text2LabelMODELS]
         self._selectAiText2LabelModelComboBox.addItems(text2label_model_names)
         # 禁止自动加载模型 提升软件整体初始化速度
         text_model_index = 0
-
         if self._config["ai"]["text_default"] in text2label_model_names:
             text_model_index = text2label_model_names.index(self._config["ai"]["text_default"])
         self._selectAiText2LabelModelComboBox.setCurrentIndex(text_model_index)
-        # self.init_text2lable_model(Text2LabelMODELS[text_model_index].config_path,
-        #                            Text2LabelMODELS[text_model_index].model_path,self.device)
         self._selectAiText2LabelModelComboBox.currentIndexChanged.connect(
             lambda: self.init_text2lable_model(
                 Text2LabelMODELS[
                     text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].config_path,
                 Text2LabelMODELS[
-                    text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].model_path,self.device
-                # "D:\code\Grounded-Segment-Anything\GroundingDINO\groundingdino\config\GroundingDINO_SwinT_OGC.py",
-                # "D:\code\Grounded-Segment-Anything\groundingdino_swint_ogc.pth"
-                # name=self._selectAiText2LabelModelComboBox.currentText()
+                    text2label_model_names.index(self._selectAiText2LabelModelComboBox.currentText())].model_path,
+                self.device
             )
         )
         Text2Label_Input = QtWidgets.QWidgetAction(self)
         Text2Label_Input.setDefaultWidget(QtWidgets.QWidget())
         Text2Label_Input.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
         self.Text2Label_Text = QtWidgets.QLineEdit(self)
-        self.Text2Label_Text.setFixedWidth(400)
-        self.Text2Label_detect_button = QtWidgets.QPushButton("Text2Label", self)
-        self.Text2Label_detect_button.setFixedWidth(400)
+        self.Text2Label_Text.setFixedWidth(200)
+        self.Text2Label_detect_button = QtWidgets.QPushButton("TEXT-LABEL", self)
+        self.Text2Label_detect_button.setFixedWidth(200)
         self.Text2Label_Text.setAlignment(QtCore.Qt.AlignCenter)
-        # Text2Label_detect_button.setAlignment(QtCore.Qt.AlignCenter)
         Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_Text)
         Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_detect_button)
         self.Text2Label_detect_button.clicked.connect(self.Run_Text2Label)
         Text2Label_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcuts["Text2Label"]), self)
         Text2Label_shortcut.activated.connect(self.Text2Label_detect_button.click)
-        # self.Text2Label_detect_button.clicked.connect(self.run_text2label)
-        # self.Text2Label_input.setDefaultWidget(QtWidgets.QWidget())
-        # self.Text2Label_detect_button.setDefaultWidget(QtWidgets.QWidget())
-        # self.Text2Label_input.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        # self.Text2Label_detect_button.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-
-        selectAiModel = QtWidgets.QWidgetAction(self)
-        selectAiModel.setDefaultWidget(QtWidgets.QWidget())
-        selectAiModel.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        #
-        selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM"))
-        selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
-        selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
-        #
-        self._selectAiModelComboBox = QtWidgets.QComboBox()
-        selectAiModel.defaultWidget().layout().addWidget(self._selectAiModelComboBox)
         model_names = [model.name for model in MODELS]
         self._selectAiModelComboBox.addItems(model_names)
         if self._config["ai"]["default"] in model_names:
@@ -1031,9 +1065,10 @@ class MainWindow(QtWidgets.QMainWindow):
             zoom,
             None,
             selectAiModel,
-            selectAiText2LabelModel,
+            None,
+            Check_AI_config_layout,
+            None,
             Text2Label_Input,
-
         )
 
         self.statusBar().showMessage(str(self.tr("%s started.")) % __appname__)
@@ -1660,6 +1695,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lf = LabelFile()
         self.setDirty()
         self.loadFile(self.filename)
+
         def format_shape(s):
             # doc = {}
             # doc[0] = 'people'
@@ -1700,15 +1736,15 @@ class MainWindow(QtWidgets.QMainWindow):
             flag = item.checkState() == Qt.Checked
             flags[key] = flag
         try:
-            if self.labelFile:
-                if self.labelFile.shapes:
-                # 如果不为空，将新 shapes 追加到现有的 shapes 中
-                    existing_shapes = self.labelFile.shapes
-                    for existing_shape in existing_shapes:
-                        if existing_shape['mask'] is not None:
-                            existing_shape['mask'] = utils.img_arr_to_b64(existing_shape['mask'].astype(np.uint8))
-                    shapes = existing_shapes + shapes
-
+            if self.check_save_existing_label.isChecked():
+                if self.labelFile:
+                    if self.labelFile.shapes:
+                        # 如果不为空，将新 shapes 追加到现有的 shapes 中
+                        existing_shapes = self.labelFile.shapes
+                        for existing_shape in existing_shapes:
+                            if existing_shape['mask'] is not None:
+                                existing_shape['mask'] = utils.img_arr_to_b64(existing_shape['mask'].astype(np.uint8))
+                        shapes = existing_shapes + shapes
             imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
             imageData = self.imageData if self._config["store_data"] else None
             if osp.dirname(filename) and not osp.exists(osp.dirname(filename)):
@@ -2164,18 +2200,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         so = ort.SessionOptions()
         so.log_severity_level = 4
-        if self.device=="cpu":
+        if self.device == "cpu":
             self.net = ort.InferenceSession(self.onnx_path, so, providers=['CPUExecutionProvider'])
         elif self.device == "cuda":
             self.net = ort.InferenceSession(self.onnx_path, so, providers=['CUDAExecutionProvider'])
         else:
-                self.errorMessage(
-                    self.tr("Invalid providers"),
-                    self.tr("Invalid infer providers '{}'").format(
-                        self._config["device"]
-                    ),
-                )
-                return False
+            self.errorMessage(
+                self.tr("Invalid providers"),
+                self.tr("Invalid infer providers '{}'").format(
+                    self._config["device"]
+                ),
+            )
+            return False
         self.actions.object.setEnabled(True)
         self.actions.rotate.setEnabled(False)
 
@@ -2337,174 +2373,168 @@ class MainWindow(QtWidgets.QMainWindow):
             new_image[0:new_size[0], 0:new_size[1]] = resized_image
             return new_image, ratio
 
-        image = labelme.utils.img_qt_to_arr(self.image)
-        # so = ort.SessionOptions()
-        # so.log_severity_level = 3
-        # net = ort.InferenceSession(self.onnx_path, so)
-        input_tensors = self.net.get_inputs()
-        self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])  # 该 API 会返回列表
-        for input_tensor in input_tensors:  # 因为可能有多个输入，所以为列表
-            input_info = {
-                "name": input_tensor.name,
-                "type": input_tensor.type,
-                "shape": input_tensor.shape,
-            }
-        # resize_h = math.floor(image.shape[0]/32)*32
-        # resize_w = math.floor(image.shape[1]/32)*32
-        # img = cv2.resize(image, (resize_w,resize_h))
-        # offset_h=input_info["shape"][2]-resize_h
-        # offset_w = input_info["shape"][3] - resize_w
-        # img = cv2.resize(image, (960, 544))
-        # offset_h=960-544
-        # offset_w = 0
-        # img = cv2.copyMakeBorder(img, 0,  offset_h, 0, offset_w, cv2.BORDER_CONSTANT, value=(114,114,114))
-        # img = cv2.resize(image, (input_info["shape"][3], input_info["shape"][2]))
-        # img, ratio, (dw, dh) = letterbox(image, (input_info["shape"][3], input_info["shape"][2]))
-        # img = cv2.resize(image, (640, 360))
-        # img = cv2.copyMakeBorder(img, 0, 280, 0, 0, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-        # img = resize_with_padding(image,(input_info["shape"][2],input_info["shape"][3]))
-        img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
-        # img = cv2.resize(img, (input_info["shape"][3], input_info["shape"][2]))
-        img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
-        img = img / 255
-        img = img.astype(np.float32)
-        blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
-        inputs = {self.net.get_inputs()[0].name: blob}
-        pred = self.net.run(None, inputs)[0]
-        polygon = []
-        pred = np.squeeze(pred)
-        pred = np.transpose(pred, (1, 0))
-        pred_class = pred[..., 4:]
-        pred_conf = np.max(pred_class, axis=-1)
-        pred = np.insert(pred, 4, pred_conf, axis=-1)
-        result = nms(pred, 0.4, 0.45)
-        for detection in result:
-            xmin, ymin, xmax, ymax, score, class_id = detection
-            ymin = ymin + 2
-            xmin = xmin + 1
+        if self.check_all_infer.isChecked():
+            start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
 
-            detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
-                      int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
-            # detect = [int((xmin - xmax / 2) * image.shape[1]/input_info["shape"][3]), int((ymin - ymax / 2) * (image.shape[0]/input_info["shape"][2])),
-            #           int((xmin + xmax / 2) * image.shape[1]/input_info["shape"][3]), int((ymin + ymax / 2) * (image.shape[0]/input_info["shape"][2]))]
-            points0 = [detect[0], detect[1]]
-            points1 = [detect[2], detect[3]]
-            polygon.append([class_id, points0, points1])
-        label_file = osp.splitext(self.imagePath)[0] + ".json"
-        if self.output_dir:
-            label_file_without_path = osp.basename(label_file)
-            label_file = osp.join(self.output_dir, label_file_without_path)
-        self.save_AI_Labels(label_file, polygon)
-        self.loadFile(self.filename)
+            for i in range(start_index, len(self.imageList)):  # 打开下一个图像
+                image = labelme.utils.img_qt_to_arr(self.image)
+                input_tensors = self.net.get_inputs()
+                self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])
+
+                for input_tensor in input_tensors:
+                    input_info = {
+                        "name": input_tensor.name,
+                        "type": input_tensor.type,
+                        "shape": input_tensor.shape,
+                    }
+
+                img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+                img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
+                img = img / 255
+                img = img.astype(np.float32)
+                blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
+                inputs = {self.net.get_inputs()[0].name: blob}
+                pred = self.net.run(None, inputs)[0]
+                polygon = []
+                pred = np.squeeze(pred)
+                pred = np.transpose(pred, (1, 0))
+                pred_class = pred[..., 4:]
+                pred_conf = np.max(pred_class, axis=-1)
+                pred = np.insert(pred, 4, pred_conf, axis=-1)
+                result = nms(pred, 0.4, 0.45)
+
+                for detection in result:
+                    xmin, ymin, xmax, ymax, score, class_id = detection
+                    ymin = ymin + 2
+                    xmin = xmin + 1
+
+                    detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
+                              int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
+                    points0 = [detect[0], detect[1]]
+                    points1 = [detect[2], detect[3]]
+                    polygon.append([class_id, points0, points1])
+
+                label_file = osp.splitext(self.imagePath)[0] + ".json"
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = osp.join(self.output_dir, label_file_without_path)
+                self.save_AI_Labels(label_file, polygon)
+                self.openNextImg()
+        else:
+            image = labelme.utils.img_qt_to_arr(self.image)
+            input_tensors = self.net.get_inputs()
+            self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])  # 该 API 会返回列表
+            for input_tensor in input_tensors:  # 因为可能有多个输入，所以为列表
+                input_info = {
+                    "name": input_tensor.name,
+                    "type": input_tensor.type,
+                    "shape": input_tensor.shape,
+                }
+            img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+            img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
+            img = img / 255
+            img = img.astype(np.float32)
+            blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
+            inputs = {self.net.get_inputs()[0].name: blob}
+            pred = self.net.run(None, inputs)[0]
+            polygon = []
+            pred = np.squeeze(pred)
+            pred = np.transpose(pred, (1, 0))
+            pred_class = pred[..., 4:]
+            pred_conf = np.max(pred_class, axis=-1)
+            pred = np.insert(pred, 4, pred_conf, axis=-1)
+            result = nms(pred, 0.4, 0.45)
+            for detection in result:
+                xmin, ymin, xmax, ymax, score, class_id = detection
+                ymin = ymin + 2
+                xmin = xmin + 1
+
+                detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
+                          int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
+                points0 = [detect[0], detect[1]]
+                points1 = [detect[2], detect[3]]
+                polygon.append([class_id, points0, points1])
+            label_file = osp.splitext(self.imagePath)[0] + ".json"
+            if self.output_dir:
+                label_file_without_path = osp.basename(label_file)
+                label_file = osp.join(self.output_dir, label_file_without_path)
+            self.save_AI_Labels(label_file, polygon)
+            self.loadFile(self.filename)
 
     def Run_Text2Label(self, _value=False):
-        image = labelme.utils.img_qt_to_arr(self.image)
-        if image.shape[-1] == 1:
-            image = np.squeeze(image, axis=-1)
-        # image = Image.fromarray(image)
-        boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+        if self.check_all_infer:
+            if self.check_all_infer.isChecked():
+                start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
 
-        size = image.shape
-        pred_dict = {
-            "boxes": boxes_filt,
-            "size": [size[0], size[1]],  # H,W
-            "labels": pred_phrases,
-        }
-        H, W = pred_dict["size"]
-        boxes = pred_dict["boxes"]
-        labels = pred_dict["labels"]
-        polygon = []
-        for box, label in zip(boxes, labels):
-            # from 0..1 to 0..W, 0..H
-            box = box * np.array([W, H, W, H])
-            # from xywh to xyxy
-            box[:2] -= box[2:] / 2
-            box[2:] += box[:2]
-            x0, y0, x1, y1 = box
-            x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
-            points0 = [x0, y0]
-            points1 = [x1, y1]
-            polygon.append([label, points0, points1])
-        label_file = osp.splitext(self.imagePath)[0] + ".json"
-        if self.output_dir:
-            label_file_without_path = osp.basename(label_file)
-            label_file = osp.join(self.output_dir, label_file_without_path)
-        self.save_AI_Labels(label_file, polygon)
-        self.loadFile(self.filename)
+                for i in range(start_index, len(self.imageList)):
+                    image = labelme.utils.img_qt_to_arr(self.image)
+                    if image.shape[-1] == 1:
+                        image = np.squeeze(image, axis=-1)
+                    # image = Image.fromarray(image)
+                    boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
 
-        # if not self.Text2Label_Text.text():
-        #     return "请输入文本"
-        # caption = self.Text2Label_Text.text()
-        # caption = caption.lower()
-        # caption = caption.strip()
-        #
-        # if not caption.endswith("."):
-        #     caption = caption + "."
-        # device = "cuda"
-        # model = self.text2label_model.to(device)
-        # image = labelme.utils.img_qt_to_arr(self.image)
-        # if image.shape[-1] == 1:
-        #     image = np.squeeze(image, axis=-1)
-        # image = Image.fromarray(image)
-        # image_infer = image.convert("RGB")  # load image
-        # trans = transforms.Compose(
-        #     [
-        #         transforms.RandomResize([800], max_size=1333),
-        #         transforms.ToTensor(),
-        #         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        #     ]
-        # )
-        # image_infer, _ = trans(image_infer, None)  # 3, h, w
-        #
-        # image_infer = image_infer.to(device)
-        # with torch.no_grad():
-        #     outputs = model(image_infer[None], captions=[caption])
-        # logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
-        # boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
-        # logits.shape[0]
-        # logits_filt = logits.clone()
-        # boxes_filt = boxes.clone()
-        # filt_mask = logits_filt.max(dim=1)[0] > 0.3
-        # logits_filt = logits_filt[filt_mask]  # num_filt, 256
-        # boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
-        # logits_filt.shape[0]
-        #
-        # # get phrase
-        # tokenlizer = model.tokenizer
-        # tokenized = tokenlizer(caption)
-        # # build pred
-        # pred_phrases = []
-        # for logit, box in zip(logits_filt, boxes_filt):
-        #     pred_phrase = get_phrases_from_posmap(logit > 0.25, tokenized, tokenlizer)
-        #     pred_phrases.append(pred_phrase)
-        #
-        # size = image.size
-        # pred_dict = {
-        #     "boxes": boxes_filt,
-        #     "size": [size[1], size[0]],  # H,W
-        #     "labels": pred_phrases,
-        # }
-        # H, W = pred_dict["size"]
-        # boxes = pred_dict["boxes"]
-        # labels = pred_dict["labels"]
-        # polygon = []
-        # for box, label in zip(boxes, labels):
-        #     # from 0..1 to 0..W, 0..H
-        #     box = box * torch.Tensor([W, H, W, H])
-        #     # from xywh to xyxy
-        #     box[:2] -= box[2:] / 2
-        #     box[2:] += box[:2]
-        #     x0, y0, x1, y1 = box
-        #     x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
-        #     points0 = [x0, y0]
-        #     points1 = [x1, y1]
-        #     polygon.append([label, points0, points1])
-        # label_file = osp.splitext(self.imagePath)[0] + ".json"
-        # if self.output_dir:
-        #     label_file_without_path = osp.basename(label_file)
-        #     label_file = osp.join(self.output_dir, label_file_without_path)
-        # self.save_AI_Labels(label_file, polygon)
-        # self.loadFile(self.filename)
+                    size = image.shape
+                    pred_dict = {
+                        "boxes": boxes_filt,
+                        "size": [size[0], size[1]],  # H,W
+                        "labels": pred_phrases,
+                    }
+                    H, W = pred_dict["size"]
+                    boxes = pred_dict["boxes"]
+                    labels = pred_dict["labels"]
+                    polygon = []
+                    for box, label in zip(boxes, labels):
+                        # from 0..1 to 0..W, 0..H
+                        box = box * np.array([W, H, W, H])
+                        # from xywh to xyxy
+                        box[:2] -= box[2:] / 2
+                        box[2:] += box[:2]
+                        x0, y0, x1, y1 = box
+                        x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+                        points0 = [x0, y0]
+                        points1 = [x1, y1]
+                        polygon.append([label, points0, points1])
+                    label_file = osp.splitext(self.imagePath)[0] + ".json"
+                    if self.output_dir:
+                        label_file_without_path = osp.basename(label_file)
+                        label_file = osp.join(self.output_dir, label_file_without_path)
+                    self.save_AI_Labels(label_file, polygon)
+                    self.loadFile(self.filename)
+                    self.openNextImg()
+        else:
+            image = labelme.utils.img_qt_to_arr(self.image)
+            if image.shape[-1] == 1:
+                image = np.squeeze(image, axis=-1)
+            # image = Image.fromarray(image)
+            boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+
+            size = image.shape
+            pred_dict = {
+                "boxes": boxes_filt,
+                "size": [size[0], size[1]],  # H,W
+                "labels": pred_phrases,
+            }
+            H, W = pred_dict["size"]
+            boxes = pred_dict["boxes"]
+            labels = pred_dict["labels"]
+            polygon = []
+            for box, label in zip(boxes, labels):
+                # from 0..1 to 0..W, 0..H
+                box = box * np.array([W, H, W, H])
+                # from xywh to xyxy
+                box[:2] -= box[2:] / 2
+                box[2:] += box[:2]
+                x0, y0, x1, y1 = box
+                x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+                points0 = [x0, y0]
+                points1 = [x1, y1]
+                polygon.append([label, points0, points1])
+            label_file = osp.splitext(self.imagePath)[0] + ".json"
+            if self.output_dir:
+                label_file_without_path = osp.basename(label_file)
+                label_file = osp.join(self.output_dir, label_file_without_path)
+            self.save_AI_Labels(label_file, polygon)
+            self.loadFile(self.filename)
 
     def Image_pass(self, _value=False):
         if not os.path.exists(self.lastOpenDir + '/image'):
@@ -2896,11 +2926,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # if yes == QtWidgets.QMessageBox.warning(
         #         self, self.tr("Attention"), msg, yes | no, yes
         # ):
-            self.remLabels(self.canvas.deleteSelected())
-            self.setDirty()
-            if self.noShapes():
-                for action in self.actions.onShapesPresent:
-                    action.setEnabled(False)
+        self.remLabels(self.canvas.deleteSelected())
+        self.setDirty()
+        if self.noShapes():
+            for action in self.actions.onShapesPresent:
+                action.setEnabled(False)
 
     def copyShape(self):
         self.canvas.endMove(copy=True)

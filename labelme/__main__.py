@@ -7,7 +7,7 @@ import sys
 
 import yaml
 from qtpy import QtCore
-from qtpy import QtWidgets
+from qtpy import QtWidgets,QtGui
 
 from labelme import __appname__
 from labelme import __version__
@@ -168,6 +168,8 @@ def main():
     app.setApplicationName(__appname__)
     app.setWindowIcon(newIcon("icon"))
     app.installTranslator(translator)
+    font = QtGui.QFont("Arial", 9)
+    app.setFont(font)
     win = MainWindow(
         config=config,
         filename=filename,

@@ -84,7 +84,7 @@
     <message>
         <location filename="../app.py" line="229"/>
         <source>Open next (hold Ctl+Shift to copy labels)</source>
-        <translation>打开下一幅 (按Ctl+Shift拷贝标签)</translation>
+        <translation>打开下一幅</translation>
     </message>
     <message>
         <location filename="../app.py" line="237"/>
@@ -94,7 +94,7 @@
     <message>
         <location filename="../app.py" line="237"/>
         <source>Open prev (hold Ctl+Shift to copy labels)</source>
-        <translation>打开上一幅 (按Ctl+Shift拷贝标签)</translation>
+        <translation>打开上一幅</translation>
     </message>
     <message>
         <location filename="../app.py" line="245"/>
