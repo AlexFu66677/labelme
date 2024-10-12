@@ -24,7 +24,7 @@ from labelme.widgets import Concat_dataset
 from labelme.widgets import DatasetDialog
 from labelme.widgets import Yolo_Vis_Dialog
 from labelme.widgets import Video_slice_Dialog
-
+from labelme.widgets import Data_augmentation_Dialog
 import imgviz
 import natsort
 from qtpy import QtCore
@@ -314,6 +314,13 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["video_slice"],
             "video_slice",
             self.tr("视频切分"),
+        )
+        data_augmentation = action(
+            self.tr("&数据增强"),
+            self.Data_augmentation,
+            shortcuts["data_augmentation"],
+            "data_augmentation",
+            self.tr("数据增强"),
         )
         slice_dataset = action(
             self.tr("&数据集分割"),
@@ -755,6 +762,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QCResult=QCResult,
             dataset=dataset,
             slice_dataset=slice_dataset,
+            data_augmentation=data_augmentation,
             concat_dataset=concat_dataset,
             yolovis=yolovis,
             video_slice=video_slice,
@@ -955,7 +963,6 @@ class MainWindow(QtWidgets.QMainWindow):
         selectAiModel = QtWidgets.QWidgetAction(self)
         selectAiModel.setDefaultWidget(selectAiWidget)
 
-
         # selectAiText2LabelModel = QtWidgets.QWidgetAction(self)
         # selectAiText2LabelModel.setDefaultWidget(QtWidgets.QWidget())
         # selectAiText2LabelModel.defaultWidget().setLayout(QtWidgets.QHBoxLayout())
@@ -973,8 +980,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
         # self._selectAiModelComboBox = QtWidgets.QComboBox()
         # selectAiModel.defaultWidget().layout().addWidget(self._selectAiModelComboBox)
-
-
 
         text2label_model_names = [model.name for model in Text2LabelMODELS]
         self._selectAiText2LabelModelComboBox.addItems(text2label_model_names)
@@ -1040,6 +1045,7 @@ class MainWindow(QtWidgets.QMainWindow):
             concat_dataset,
             yolovis,
             video_slice,
+            data_augmentation,
             None,
             image_pass,
             image_unpass,
@@ -2443,7 +2449,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pred_class = pred[..., 4:]
             pred_conf = np.max(pred_class, axis=-1)
             pred = np.insert(pred, 4, pred_conf, axis=-1)
-            result = nms(pred, 0.4, 0.45)
+            result = nms(pred, 0.25, 0.45)
             for detection in result:
                 xmin, ymin, xmax, ymax, score, class_id = detection
                 ymin = ymin + 2
@@ -2462,45 +2468,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self.loadFile(self.filename)
 
     def Run_Text2Label(self, _value=False):
-        if self.check_all_infer:
-            if self.check_all_infer.isChecked():
-                start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
+        if self.check_all_infer.isChecked():
+            start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
 
-                for i in range(start_index, len(self.imageList)):
-                    image = labelme.utils.img_qt_to_arr(self.image)
-                    if image.shape[-1] == 1:
-                        image = np.squeeze(image, axis=-1)
-                    # image = Image.fromarray(image)
-                    boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+            for i in range(start_index, len(self.imageList)):
+                image = labelme.utils.img_qt_to_arr(self.image)
+                if image.shape[-1] == 1:
+                    image = np.squeeze(image, axis=-1)
+                # image = Image.fromarray(image)
+                boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
 
-                    size = image.shape
-                    pred_dict = {
-                        "boxes": boxes_filt,
-                        "size": [size[0], size[1]],  # H,W
-                        "labels": pred_phrases,
-                    }
-                    H, W = pred_dict["size"]
-                    boxes = pred_dict["boxes"]
-                    labels = pred_dict["labels"]
-                    polygon = []
-                    for box, label in zip(boxes, labels):
-                        # from 0..1 to 0..W, 0..H
-                        box = box * np.array([W, H, W, H])
-                        # from xywh to xyxy
-                        box[:2] -= box[2:] / 2
-                        box[2:] += box[:2]
-                        x0, y0, x1, y1 = box
-                        x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
-                        points0 = [x0, y0]
-                        points1 = [x1, y1]
-                        polygon.append([label, points0, points1])
-                    label_file = osp.splitext(self.imagePath)[0] + ".json"
-                    if self.output_dir:
-                        label_file_without_path = osp.basename(label_file)
-                        label_file = osp.join(self.output_dir, label_file_without_path)
-                    self.save_AI_Labels(label_file, polygon)
-                    self.loadFile(self.filename)
-                    self.openNextImg()
+                size = image.shape
+                pred_dict = {
+                    "boxes": boxes_filt,
+                    "size": [size[0], size[1]],  # H,W
+                    "labels": pred_phrases,
+                }
+                H, W = pred_dict["size"]
+                boxes = pred_dict["boxes"]
+                labels = pred_dict["labels"]
+                polygon = []
+                for box, label in zip(boxes, labels):
+                    # from 0..1 to 0..W, 0..H
+                    box = box * np.array([W, H, W, H])
+                    # from xywh to xyxy
+                    box[:2] -= box[2:] / 2
+                    box[2:] += box[:2]
+                    x0, y0, x1, y1 = box
+                    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+                    points0 = [x0, y0]
+                    points1 = [x1, y1]
+                    polygon.append([label, points0, points1])
+                label_file = osp.splitext(self.imagePath)[0] + ".json"
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = osp.join(self.output_dir, label_file_without_path)
+                self.save_AI_Labels(label_file, polygon)
+                self.loadFile(self.filename)
+                self.openNextImg()
         else:
             image = labelme.utils.img_qt_to_arr(self.image)
             if image.shape[-1] == 1:
@@ -2564,7 +2569,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def Video_slice(self, _value=False):
         dialog = Video_slice_Dialog()
         dialog.exec_()
-
+    def Data_augmentation(self, _value=False):
+        dialog = Data_augmentation_Dialog()
+        dialog.exec_()
     def Slice_Dataset(self, _value=False):
         dialog = Slice_dataset()
         dialog.exec_()

@@ -24,7 +24,7 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         layout.addWidget(type_label)
         layout.addWidget(self.type_combobox)
 
-        video_input_label = QtWidgets.QLabel("video_input}:")
+        video_input_label = QtWidgets.QLabel("video_input:")
         self.video_input = QtWidgets.QLineEdit()
         self.video_input.setReadOnly(True)
         video_input_button = QtWidgets.QPushButton("Select")

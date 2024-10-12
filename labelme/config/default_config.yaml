@@ -133,3 +133,4 @@ shortcuts:
   toggle_all_polygons: T
   Text2Label: F
   video_slice: null
+  data_augmentation: null
