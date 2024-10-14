@@ -147,7 +147,7 @@ class Slice_dataset(QtWidgets.QDialog):
                     label_slice = []
                     for label in labels:
                         parts = label.strip().split()
-                        class_id = int(parts[0])
+                        class_id = int(float(parts[0]))
                         x_center = float(parts[1])
                         y_center = float(parts[2])
                         bbox_width = float(parts[3])

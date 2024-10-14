@@ -83,6 +83,17 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         gaussian_blur_layout.addWidget(self.gaussian_blur_slider)
         self.augmentation_layout.addLayout(gaussian_blur_layout)
 
+        # 高斯噪声
+        self.gaussian_noise_checkbox = QtWidgets.QCheckBox("Gaussian Noise")
+        self.gaussian_noise_checkbox.stateChanged.connect(self.update_name)
+        self.gaussian_noise_slider = QtWidgets.QSpinBox()
+        self.gaussian_noise_slider.setRange(1, 100)  # 设置噪声强度范围（1到100）
+        self.gaussian_noise_slider.setValue(10)  # 默认值为10
+        gaussian_noise_layout = QtWidgets.QHBoxLayout()  # 横向布局
+        gaussian_noise_layout.addWidget(self.gaussian_noise_checkbox)
+        gaussian_noise_layout.addWidget(self.gaussian_noise_slider)
+        self.augmentation_layout.addLayout(gaussian_noise_layout)
+
         # JPG压缩
         self.jpg_compression_checkbox = QtWidgets.QCheckBox("JPG Compression")
         self.jpg_compression_checkbox.stateChanged.connect(self.update_name)
@@ -163,6 +174,8 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         if self.grayscale_checkbox.isChecked():
             name += "_gray"  # 灰度
 
+        if self.gaussian_noise_checkbox.isChecked():
+            name += "_gn"
         # 更新显示框
         self.filename_display.setText(name)
 
@@ -198,6 +211,10 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
             if self.gaussian_blur_checkbox.isChecked():
                 blur_size = self.gaussian_blur_slider.value()
                 img = self.apply_gaussian_blur(img, blur_size)
+
+            if self.gaussian_noise_checkbox.isChecked():
+                noise_level = self.gaussian_noise_slider.value()
+                img = self.apply_gaussian_noise(img, noise_level)
 
             # 应用JPG压缩
             if self.jpg_compression_checkbox.isChecked():
@@ -244,6 +261,16 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         new_y = x
         return [label[0], new_x, new_y, h, w]
 
+    def apply_gaussian_noise(self, img, noise_level):
+        """给图像添加高斯噪声"""
+        row, col, ch = img.shape
+        mean = 0
+        sigma = noise_level / 100  # 将滑块值转换为标准差
+        gauss = np.random.normal(mean, sigma, (row, col, ch))  # 生成高斯噪声
+        noisy_img = img + gauss * 255  # 调整噪声的影响
+        noisy_img = np.clip(noisy_img, 0, 255).astype(np.uint8)  # 确保图像像素值在0-255之间
+        return noisy_img
+
     def apply_flip(self, img, yolo_data, flip_type):
         """翻转图像和标注"""
         if flip_type == "Horizontal":
@@ -277,7 +304,9 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
             lines = f.readlines()
         yolo_data = []
         for line in lines:
-            parts = list(map(float, line.split()))
+            parts = line.split()
+            parts[0] = int(parts[0])  # 将第一个数据转换为int
+            parts[1:] = map(float, parts[1:])  # 将其余数据转换为float
             yolo_data.append(parts)
         return yolo_data
 
