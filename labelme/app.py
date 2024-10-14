@@ -2395,6 +2395,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     }
 
                 img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+                image_height, image_width = img.shape[:2]
                 img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
                 img = img / 255
                 img = img.astype(np.float32)
@@ -2410,15 +2411,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 result = nms(pred, 0.4, 0.45)
 
                 for detection in result:
-                    xmin, ymin, xmax, ymax, score, class_id = detection
-                    ymin = ymin + 2
-                    xmin = xmin + 1
+                    x_center, y_center, w, h, score, class_id = detection
+                    # ymin = ymin + 2
+                    # xmin = xmin + 1
 
-                    detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
-                              int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
+                    detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
+                              int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
+
                     points0 = [detect[0], detect[1]]
                     points1 = [detect[2], detect[3]]
+                    points0[0] = max(0, min(points0[0], image_width - 1))
+                    points0[1] = max(0, min(points0[1], image_height - 1))
+                    points1[0] = max(0, min(points1[0], image_width - 1))
+                    points1[1] = max(0, min(points1[1], image_height - 1))
                     polygon.append([class_id, points0, points1])
+
 
                 label_file = osp.splitext(self.imagePath)[0] + ".json"
                 if self.output_dir:
@@ -2437,6 +2444,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "shape": input_tensor.shape,
                 }
             img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+            image_height, image_width = img.shape[:2]
             img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
             img = img / 255
             img = img.astype(np.float32)
@@ -2451,14 +2459,19 @@ class MainWindow(QtWidgets.QMainWindow):
             pred = np.insert(pred, 4, pred_conf, axis=-1)
             result = nms(pred, 0.25, 0.45)
             for detection in result:
-                xmin, ymin, xmax, ymax, score, class_id = detection
-                ymin = ymin + 2
-                xmin = xmin + 1
+                x_center, y_center, w, h, score, class_id = detection
+                # ymin = ymin + 2
+                # xmin = xmin + 1
 
-                detect = [int((xmin - xmax / 2) / ratio), int((ymin - ymax / 2) / ratio),
-                          int((xmin + xmax / 2) / ratio), int((ymin + ymax / 2) / ratio)]
+                detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
+                          int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
+
                 points0 = [detect[0], detect[1]]
                 points1 = [detect[2], detect[3]]
+                points0[0] = max(0, min(points0[0], image_width - 1))
+                points0[1] = max(0, min(points0[1], image_height - 1))
+                points1[0] = max(0, min(points1[0], image_width - 1))
+                points1[1] = max(0, min(points1[1], image_height - 1))
                 polygon.append([class_id, points0, points1])
             label_file = osp.splitext(self.imagePath)[0] + ".json"
             if self.output_dir:
