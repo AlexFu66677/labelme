@@ -82,6 +82,7 @@ class LabelFile(object):
             "points",
             "group_id",
             "shape_type",
+            "direction",
             "flags",
             "description",
             "mask",
@@ -117,6 +118,7 @@ class LabelFile(object):
                     flags=s.get("flags", {}),
                     description=s.get("description"),
                     group_id=s.get("group_id"),
+                    direction=s.get("direction",0),
                     mask=utils.img_b64_to_arr(s["mask"]).astype(bool)
                     if s.get("mask")
                     else None,

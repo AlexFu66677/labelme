@@ -134,6 +134,17 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         self.use_new_name_checkbox.setChecked(True)  # 默认选中
         layout.addWidget(self.use_new_name_checkbox)
 
+        # 添加进度条
+        progress_layout = QtWidgets.QHBoxLayout()  # 横向布局
+        self.progress_label = QtWidgets.QLabel("Progress:")
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setAlignment(QtCore.Qt.AlignCenter)
+        progress_layout.addWidget(self.progress_label)
+        progress_layout.addWidget(self.progress_bar)
+        layout.addLayout(progress_layout)
+
         # 开始按钮
         start_button = QtWidgets.QPushButton("Start")
         layout.addWidget(start_button)
@@ -187,10 +198,19 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
             self.errorMessage("Error", "Please select both input and output folders.")
             return
 
+        image_paths = self.get_images_from_folder(input_folder)
+
+        if len(image_paths) == 0:
+            self.errorMessage("Error", "No images found in the selected input folder.")
+            return
+
+        self.progress_bar.setValue(0)
+        total_images = len(image_paths)
+
         # 检查选择的增强操作并应用
         image_paths = self.get_images_from_folder(input_folder)
 
-        for image_path in image_paths:
+        for index, image_path in enumerate(image_paths):
             img = cv2.imread(image_path)
             filename = os.path.basename(image_path)
             txt_path = os.path.splitext(image_path)[0] + ".txt"  # 对应的YOLO标注
@@ -241,6 +261,10 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
                 new_filename = filename  # 不使用新名称，覆盖原文件
             self.save_image_and_labels(img, yolo_data, output_folder, new_filename)
 
+            progress = int((index + 1) / total_images * 100)
+            self.progress_bar.setValue(progress)
+        self.progress_bar.setValue(100)  # 完成后将进度条设置为100%
+        QtWidgets.QMessageBox.information(self, "Done", "All images processed successfully!")
     def apply_rotation(self, img, yolo_data):
         """对图像和YOLO标注执行旋转90度操作"""
         # 图像顺时针旋转90度

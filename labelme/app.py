@@ -445,6 +445,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("Start drawing rectangles"),
             enabled=False,
         )
+        createRotateMode = action(
+            self.tr("Create Rotate"),
+            lambda: self.toggleDrawMode(False, createMode="rotate"),
+            shortcuts["create_rotate"],
+            "objects",
+            self.tr("Start drawing rotate rectangles"),
+            enabled=False,
+        )
         createCircleMode = action(
             self.tr("Create Circle"),
             lambda: self.toggleDrawMode(False, createMode="circle"),
@@ -780,6 +788,7 @@ class MainWindow(QtWidgets.QMainWindow):
             createMode=createMode,
             editMode=editMode,
             createRectangleMode=createRectangleMode,
+            createRotateMode=createRotateMode,
             createCircleMode=createCircleMode,
             createLineMode=createLineMode,
             createPointMode=createPointMode,
@@ -819,6 +828,7 @@ class MainWindow(QtWidgets.QMainWindow):
             menu=(
                 createMode,
                 createRectangleMode,
+                createRotateMode,
                 createCircleMode,
                 createLineMode,
                 createPointMode,
@@ -839,6 +849,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 close,
                 createMode,
                 createRectangleMode,
+                createRotateMode,
                 createCircleMode,
                 createLineMode,
                 createPointMode,
@@ -1204,6 +1215,7 @@ class MainWindow(QtWidgets.QMainWindow):
         actions = (
             self.actions.createMode,
             self.actions.createRectangleMode,
+            self.actions.createRotateMode,
             self.actions.createCircleMode,
             self.actions.createLineMode,
             self.actions.createPointMode,
@@ -1239,6 +1251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.save.setEnabled(False)
         self.actions.createMode.setEnabled(True)
         self.actions.createRectangleMode.setEnabled(True)
+        self.actions.createRotateMode.setEnabled(True)
         self.actions.createCircleMode.setEnabled(True)
         self.actions.createLineMode.setEnabled(True)
         self.actions.createPointMode.setEnabled(True)
@@ -1320,6 +1333,7 @@ class MainWindow(QtWidgets.QMainWindow):
         draw_actions = {
             "polygon": self.actions.createMode,
             "rectangle": self.actions.createRectangleMode,
+            "rotate": self.actions.createRotateMode,
             "circle": self.actions.createCircleMode,
             "point": self.actions.createPointMode,
             "line": self.actions.createLineMode,
@@ -1602,7 +1616,7 @@ class MainWindow(QtWidgets.QMainWindow):
             description = shape.get("description", "")
             group_id = shape["group_id"]
             other_data = shape["other_data"]
-
+            direction = shape.get("direction", 0)
             if not points:
                 # skip point-empty shape
                 continue
@@ -1612,6 +1626,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 shape_type=shape_type,
                 group_id=group_id,
                 description=description,
+                direction=direction,
                 mask=shape["mask"],
             )
             for x, y in points:
@@ -1657,6 +1672,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     else utils.img_arr_to_b64(s.mask.astype(np.uint8)),
                 )
             )
+            if data["shape_type"] == "rotate":
+                data["direction"] = s.direction
             return data
 
         shapes = [format_shape(item.shape()) for item in self.labelList]

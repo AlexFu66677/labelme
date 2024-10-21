@@ -45,6 +45,7 @@ class Shape(object):
         flags=None,
         group_id=None,
         description=None,
+        direction=0,
         mask=None,
     ):
         self.label = label
@@ -68,7 +69,7 @@ class Shape(object):
             self.NEAR_VERTEX: (4, self.P_ROUND),
             self.MOVE_VERTEX: (1.5, self.P_SQUARE),
         }
-
+        self.direction = direction
         self._closed = False
 
         if line_color is not None:
@@ -101,6 +102,7 @@ class Shape(object):
         if value not in [
             "polygon",
             "rectangle",
+            "rotate",
             "point",
             "line",
             "circle",
@@ -112,6 +114,10 @@ class Shape(object):
         self._shape_type = value
 
     def close(self):
+        if self.shape_type == "rotate" and len(self.points) == 4:
+            cx = (self.points[0].x() + self.points[2].x()) / 2
+            cy = (self.points[0].y() + self.points[2].y()) / 2
+            self.center = QtCore.QPointF(cx, cy)
         self._closed = True
 
     def addPoint(self, point, label=1):
@@ -222,6 +228,19 @@ class Shape(object):
                 if self.shape_type == "rectangle":
                     for i in range(len(self.points)):
                         self.drawVertex(vrtx_path, i)
+            elif self.shape_type in "rotate":
+                assert len(self.points) in [1, 2, 4]
+                if len(self.points) == 2:
+                    rectangle = self.getRectFromLine(*self.points)
+                    line_path.addRect(rectangle)
+                if len(self.points) == 4:
+                    line_path.moveTo(self.points[0])
+                    for i, p in enumerate(self.points):
+                        line_path.lineTo(p)
+                        if self.selected:
+                            self.drawVertex(vrtx_path, i)
+                    if self.isClosed():
+                        line_path.lineTo(self.points[0])
             elif self.shape_type == "circle":
                 assert len(self.points) in [1, 2]
                 if len(self.points) == 2:
@@ -253,7 +272,6 @@ class Shape(object):
                     self.drawVertex(vrtx_path, i)
                 if self.isClosed():
                     line_path.lineTo(self.points[0])
-
             painter.drawPath(line_path)
             if vrtx_path.length() > 0:
                 painter.drawPath(vrtx_path)
