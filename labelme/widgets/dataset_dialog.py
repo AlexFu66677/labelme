@@ -16,10 +16,10 @@ class DatasetDialog(QtWidgets.QDialog):
         # 添加下拉选择控件
         type_label = QtWidgets.QLabel("Type:")
         self.type_combobox = QtWidgets.QComboBox()
+        self.type_combobox.addItem("yolo_hbb")
+        self.type_combobox.addItem("yolo_obb")
         self.type_combobox.addItem("coco")
         self.type_combobox.addItem("voc")
-        self.type_combobox.addItem("yolo")
-
         layout.addWidget(type_label)
         layout.addWidget(self.type_combobox)
 
@@ -93,9 +93,12 @@ class DatasetDialog(QtWidgets.QDialog):
         type_data = self.type_combobox.currentText()
         if type_data=='coco':
             result = dataset.CocoGenerator(folder_data, value_data)
-        elif type_data=='yolo':
+        elif type_data=='yolo_hbb':
             sequence=self.label_sequence.text()
             result =dataset.YoloGenerator(folder_data, value_data, sequence)
+        elif type_data=='yolo_obb':
+            sequence=self.label_sequence.text()
+            result =dataset.Yolo_obbGenerator(folder_data, value_data, sequence)
         elif type_data == 'voc':
             result = dataset.VocGenerator(folder_data, value_data)
         #键值对

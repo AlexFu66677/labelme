@@ -2,6 +2,7 @@ from qtpy import QtWidgets, QtGui, QtCore
 import os
 import random
 
+
 class Yolo_Vis_Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -11,6 +12,13 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
         self.folder_labels = []
         self.folder_inputs = []
         layout = QtWidgets.QVBoxLayout()
+        type_label = QtWidgets.QLabel("Type:")
+        self.type_combobox = QtWidgets.QComboBox()
+        self.type_combobox.addItem("YOLO_HBB")
+        self.type_combobox.addItem("YOLO_OBB")
+        layout.addWidget(type_label)
+        layout.addWidget(self.type_combobox)
+
         folder_names = ["label_input", "image_input"]
         for i in range(2):
             folder_label = QtWidgets.QLabel(f"{folder_names[i]}:")
@@ -85,7 +93,8 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
     def start(self):
         image_folder = self.folder_inputs[1].text()
         if os.path.exists(image_folder):
-            self.image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.jpg') or f.endswith('.png') or f.endswith('.bmp')]
+            self.image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if
+                                f.endswith('.jpg') or f.endswith('.png') or f.endswith('.bmp')]
             if self.random_order_checkbox.isChecked():
                 random.shuffle(self.image_paths)
             else:
@@ -110,74 +119,134 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
         self.max_size = int(self.size_input.text())
 
     def display_image_with_annotations(self, image_path):
-        # Load the image
-        pixmap = QtGui.QPixmap(image_path)
-        img_width = pixmap.width()
-        img_height = pixmap.height()
+        type_data = self.type_combobox.currentText()
+        if type_data == 'YOLO_OBB':
+            # Load the image
+            pixmap = QtGui.QPixmap(image_path)
+            img_width = pixmap.width()
+            img_height = pixmap.height()
+            # Update image name label
+            self.image_name_label.setText(os.path.basename(image_path))
+            # Determine the scaling factor based on the max size input
+            if img_width > img_height:
+                scale_factor = self.max_size / img_width
+            else:
+                scale_factor = self.max_size / img_height
+            new_width = int(img_width * scale_factor)
+            new_height = int(img_height * scale_factor)
+            # Scale the image to fit the new dimensions while keeping aspect ratio
+            scaled_pixmap = pixmap.scaled(new_width, new_height, QtCore.Qt.KeepAspectRatio,
+                                          QtCore.Qt.SmoothTransformation)
+            # Create a white background image with the new dimensions
+            result_pixmap = QtGui.QPixmap(new_width, new_height)
+            result_pixmap.fill(QtCore.Qt.white)
+            # Center the scaled image
+            painter = QtGui.QPainter(result_pixmap)
+            x_offset = (new_width - scaled_pixmap.width()) // 2
+            y_offset = (new_height - scaled_pixmap.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, scaled_pixmap)
+            # Get the corresponding label file
+            label_folder = self.folder_inputs[0].text()
+            label_path = os.path.join(label_folder, os.path.splitext(os.path.basename(image_path))[0] + '.txt')
+            if os.path.exists(label_path):
+                # Create a pen to draw the bounding boxes
+                pen = QtGui.QPen(QtCore.Qt.red)
+                pen.setWidth(2)
+                painter.setPen(pen)
+                font = QtGui.QFont()
+                font.setPointSize(12)
+                painter.setFont(font)
+                with open(label_path, 'r') as f:
+                    for line in f:
+                        cls, x1,y1 ,x2,y2,x3,y3,x4,y4 = map(float, line.split())
+                        cls = int(cls)  # Ensure the class label is an integer
+                        label = cls
+                        x1 *= scaled_pixmap.width()
+                        y1 *= scaled_pixmap.height()
+                        x2 *= scaled_pixmap.width()
+                        y2 *= scaled_pixmap.height()
+                        x3 *= scaled_pixmap.width()
+                        y3 *= scaled_pixmap.height()
+                        x4 *= scaled_pixmap.width()
+                        y4 *= scaled_pixmap.height()
+                        polygon = QtGui.QPolygonF()
+                        polygon.append(QtCore.QPointF(int(x1), int(y1)))
+                        polygon.append(QtCore.QPointF(int(x2), int(y2)))
+                        polygon.append(QtCore.QPointF(int(x3), int(y3)))
+                        polygon.append(QtCore.QPointF(int(x4), int(y4)))
+                        # Draw the bounding box
+                        painter.drawPolygon(polygon)
+                        # Draw the label text at the top-left corner of the bounding box
+                        painter.drawText(x1, y1 - 10, str(label))
+            painter.end()
+        if type_data == 'YOLO_HBB':
+            # Load the image
+            pixmap = QtGui.QPixmap(image_path)
+            img_width = pixmap.width()
+            img_height = pixmap.height()
 
-        # Update image name label
-        self.image_name_label.setText(os.path.basename(image_path))
+            # Update image name label
+            self.image_name_label.setText(os.path.basename(image_path))
 
-        # Determine the scaling factor based on the max size input
-        if img_width > img_height:
-            scale_factor = self.max_size / img_width
-        else:
-            scale_factor = self.max_size / img_height
+            # Determine the scaling factor based on the max size input
+            if img_width > img_height:
+                scale_factor = self.max_size / img_width
+            else:
+                scale_factor = self.max_size / img_height
 
-        new_width = int(img_width * scale_factor)
-        new_height = int(img_height * scale_factor)
+            new_width = int(img_width * scale_factor)
+            new_height = int(img_height * scale_factor)
 
-        # Scale the image to fit the new dimensions while keeping aspect ratio
-        scaled_pixmap = pixmap.scaled(new_width, new_height, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+            # Scale the image to fit the new dimensions while keeping aspect ratio
+            scaled_pixmap = pixmap.scaled(new_width, new_height, QtCore.Qt.KeepAspectRatio,
+                                          QtCore.Qt.SmoothTransformation)
 
-        # Create a white background image with the new dimensions
-        result_pixmap = QtGui.QPixmap(new_width, new_height)
-        result_pixmap.fill(QtCore.Qt.white)
+            # Create a white background image with the new dimensions
+            result_pixmap = QtGui.QPixmap(new_width, new_height)
+            result_pixmap.fill(QtCore.Qt.white)
 
-        # Center the scaled image
-        painter = QtGui.QPainter(result_pixmap)
-        x_offset = (new_width - scaled_pixmap.width()) // 2
-        y_offset = (new_height - scaled_pixmap.height()) // 2
-        painter.drawPixmap(x_offset, y_offset, scaled_pixmap)
+            # Center the scaled image
+            painter = QtGui.QPainter(result_pixmap)
+            x_offset = (new_width - scaled_pixmap.width()) // 2
+            y_offset = (new_height - scaled_pixmap.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, scaled_pixmap)
 
-        # Get the corresponding label file
-        label_folder = self.folder_inputs[0].text()
-        label_path = os.path.join(label_folder, os.path.splitext(os.path.basename(image_path))[0] + '.txt')
+            # Get the corresponding label file
+            label_folder = self.folder_inputs[0].text()
+            label_path = os.path.join(label_folder, os.path.splitext(os.path.basename(image_path))[0] + '.txt')
 
-        if os.path.exists(label_path):
-            # Create a pen to draw the bounding boxes
-            pen = QtGui.QPen(QtCore.Qt.red)
-            pen.setWidth(2)
-            painter.setPen(pen)
+            if os.path.exists(label_path):
+                # Create a pen to draw the bounding boxes
+                pen = QtGui.QPen(QtCore.Qt.red)
+                pen.setWidth(2)
+                painter.setPen(pen)
 
-            font = QtGui.QFont()
-            font.setPointSize(12)
-            painter.setFont(font)
+                font = QtGui.QFont()
+                font.setPointSize(12)
+                painter.setFont(font)
 
-            with open(label_path, 'r') as f:
-                for line in f:
-                    cls, x_center, y_center, width, height = map(float, line.split())
-                    cls = int(cls)  # Ensure the class label is an integer
-                    label = cls
-                    x_center *= scaled_pixmap.width()
-                    y_center *= scaled_pixmap.height()
-                    width *= scaled_pixmap.width()
-                    height *= scaled_pixmap.height()
+                with open(label_path, 'r') as f:
+                    for line in f:
+                        cls, x_center, y_center, width, height = map(float, line.split())
+                        cls = int(cls)  # Ensure the class label is an integer
+                        label = cls
+                        x_center *= scaled_pixmap.width()
+                        y_center *= scaled_pixmap.height()
+                        width *= scaled_pixmap.width()
+                        height *= scaled_pixmap.height()
 
-                    # Calculate the bounding box coordinates
-                    x1 = int(x_center - width / 2)
-                    y1 = int(y_center - height / 2)
-                    x2 = int(x_center + width / 2)
-                    y2 = int(y_center + height / 2)
+                        # Calculate the bounding box coordinates
+                        x1 = int(x_center - width / 2)
+                        y1 = int(y_center - height / 2)
+                        x2 = int(x_center + width / 2)
+                        y2 = int(y_center + height / 2)
 
-                    # Draw the bounding box
-                    painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+                        # Draw the bounding box
+                        painter.drawRect(x1, y1, x2 - x1, y2 - y1)
 
-                    # Draw the label text at the top-left corner of the bounding box
-                    painter.drawText(x1, y1 - 10, str(label))
-
-        painter.end()
-
+                        # Draw the label text at the top-left corner of the bounding box
+                        painter.drawText(x1, y1 - 10, str(label))
+            painter.end()
         # Display the image with annotations
         self.image_label.setPixmap(result_pixmap)
         self.image_label.setFixedSize(new_width, new_height)

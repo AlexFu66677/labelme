@@ -446,7 +446,7 @@ class MainWindow(QtWidgets.QMainWindow):
             enabled=False,
         )
         createRotateMode = action(
-            self.tr("Create Rotate"),
+            self.tr("创建旋转框"),
             lambda: self.toggleDrawMode(False, createMode="rotate"),
             shortcuts["create_rotate"],
             "objects",
