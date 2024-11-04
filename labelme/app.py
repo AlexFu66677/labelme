@@ -1714,6 +1714,85 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return False
 
+    def save_AI_obb_labels(self, filename, res, imagePass=None):
+        lf = LabelFile()
+        self.setDirty()
+        self.loadFile(self.filename)
+
+        def format_shape(s):
+            if self.label_list and (type(s[0]) != type('1')):
+                data = dict(
+                    label=self.label_list[s[0]],
+                    points=[[p[0], p[1]] for p in s[1:5]],
+                    shape_type="rotate",
+                    direction=s[5],
+                    flags={},
+                    description="",
+                    group_id=None,
+                    mask=None,
+                )
+            elif type(s[0]) == type('1'):
+                data = dict(
+                    label=s[0],
+                    points=[[p[0], p[1]] for p in s[1:5]],
+                    shape_type="rotate",
+                    direction=s[5],
+                    flags={},
+                    description="",
+                    group_id=None,
+                    mask=None,
+                )
+            return data
+
+        shapes = [format_shape(item) for item in res]
+        flags = {}
+        for i in range(self.flag_widget.count()):
+            item = self.flag_widget.item(i)
+            key = item.text()
+            flag = item.checkState() == Qt.Checked
+            flags[key] = flag
+        try:
+            if self.check_save_existing_label.isChecked():
+                if self.labelFile:
+                    if self.labelFile.shapes:
+                        # 如果不为空，将新 shapes 追加到现有的 shapes 中
+                        existing_shapes = self.labelFile.shapes
+                        for existing_shape in existing_shapes:
+                            if existing_shape['mask'] is not None:
+                                existing_shape['mask'] = utils.img_arr_to_b64(existing_shape['mask'].astype(np.uint8))
+                        shapes = existing_shapes + shapes
+            imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
+            imageData = self.imageData if self._config["store_data"] else None
+            if osp.dirname(filename) and not osp.exists(osp.dirname(filename)):
+                os.makedirs(osp.dirname(filename))
+            lf.save(
+                filename=filename,
+                shapes=shapes,
+                imagePath=imagePath,
+                imageData=imageData,
+                imageHeight=self.image.height(),
+                imageWidth=self.image.width(),
+                otherData=self.otherData,
+                flags=flags,
+                imagePass=imagePass,
+            )
+            self.labelFile = lf
+            items = self.fileListWidget.findItems(
+                self.imagePath, Qt.MatchExactly
+            )
+            if len(items) > 0:
+                if len(items) != 1:
+                    raise RuntimeError("There are duplicate files.")
+                items[0].setCheckState(Qt.Checked)
+            # disable allows next and previous image to proceed
+            # self.filename = filename
+            return True
+        except LabelFileError as e:
+            self.errorMessage(
+                self.tr("保存标签发生错误"), self.tr("<b>%s</b>") % e
+            )
+            return False
+
     def save_AI_Labels(self, filename, res, imagePass=None):
         lf = LabelFile()
         self.setDirty()
@@ -2346,12 +2425,82 @@ class MainWindow(QtWidgets.QMainWindow):
                         cls_box = np.delete(cls_box, 0, 0)
             return output_box
 
+        def obb_nms(boxes, iou_thres):
+            remove_flags = [False] * len(boxes)
+            keep_boxes = []
+            for i, ibox in enumerate(boxes):
+                if remove_flags[i]:
+                    continue
+                keep_boxes.append(ibox)
+                for j in range(i + 1, len(boxes)):
+                    if remove_flags[j]:
+                        continue
+                    jbox = boxes[j]
+                    if (ibox[6] != jbox[6]):
+                        continue
+                    if probIou(ibox, jbox) > iou_thres:
+                        remove_flags[j] = True
+            return keep_boxes
+
+        def xywhr2xyxyxyxy(center):
+            cos, sin = (np.cos, np.sin)
+            ctr = center[..., :2]
+            w, h, angle = (center[..., i: i + 1] for i in range(2, 5))
+            cos_value, sin_value = cos(angle), sin(angle)
+            vec1 = [w / 2 * cos_value, w / 2 * sin_value]
+            vec2 = [-h / 2 * sin_value, h / 2 * cos_value]
+            vec1 = np.concatenate(vec1, axis=-1)
+            vec2 = np.concatenate(vec2, axis=-1)
+            pt1 = ctr + vec1 + vec2
+            pt2 = ctr + vec1 - vec2
+            pt3 = ctr - vec1 - vec2
+            pt4 = ctr - vec1 + vec2
+
+            return np.stack([pt1, pt2, pt3, pt4], axis=-2)
+
         def getIou(box1, box2, inter_area):
             box1_area = box1[2] * box1[3]
             box2_area = box2[2] * box2[3]
             union = box1_area + box2_area - inter_area
             iou = inter_area / union
             return iou
+
+        def covariance_matrix(obb):
+            # Extract elements
+            w, h, r = obb[2:5]
+            a = (w ** 2) / 12
+            b = (h ** 2) / 12
+
+            # Calculate cosine and sine using NumPy
+            cos_r = np.cos(r)
+            sin_r = np.sin(r)
+
+            # Calculate covariance matrix elements
+            a_val = a * cos_r ** 2 + b * sin_r ** 2
+            b_val = a * sin_r ** 2 + b * cos_r ** 2
+            c_val = (a - b) * sin_r * cos_r
+
+            return a_val, b_val, c_val
+
+        def probIou(obb1, obb2, eps=1e-7):
+            a1, b1, c1 = covariance_matrix(obb1)
+            a2, b2, c2 = covariance_matrix(obb2)
+            x1, y1 = obb1[:2]
+            x2, y2 = obb2[:2]
+            # Calculate terms for Bhattacharyya distance
+            t1 = ((a1 + a2) * ((y1 - y2) ** 2) + (b1 + b2) * ((x1 - x2) ** 2)) / \
+                 ((a1 + a2) * (b1 + b2) - (c1 + c2) ** 2 + eps)
+
+            t2 = ((c1 + c2) * (x2 - x1) * (y1 - y2)) / \
+                 ((a1 + a2) * (b1 + b2) - (c1 + c2) ** 2 + eps)
+            t3 = np.log(((a1 + a2) * (b1 + b2) - (c1 + c2) ** 2) / \
+                        (4 * np.sqrt(a1 * b1 - c1 ** 2) * np.sqrt(a2 * b2 - c2 ** 2) + eps) + eps)
+            # Bhattacharyya distance calculation
+            bd = 0.25 * t1 + 0.5 * t2 + 0.5 * t3
+            hd = np.sqrt(1.0 - np.exp(-np.clip(bd, eps, 100.0)) + eps)
+
+            # Extract the x, y coordinates of both
+            return 1 - hd
 
         def getInter(box1, box2):
             box1_x1, box1_y1, box1_x2, box1_y2 = box1[0] - box1[2] / 2, box1[1] - box1[3] / 2, \
@@ -2371,22 +2520,6 @@ class MainWindow(QtWidgets.QMainWindow):
             inter = x_inter * y_inter
             return inter
 
-        def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), stride=32):
-            shape = im.shape[:2]  # current shape [height, width]
-            r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
-            ratio = r, r  # width, height ratios
-            new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
-            dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
-            dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
-            dw /= 2  # divide padding into 2 sides
-            dh /= 2
-            if shape[::-1] != new_unpad:  # resize
-                im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
-            top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-            left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-            im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
-            return im, ratio, (dw, dh)
-
         def resize_with_padding(image, target_size, fill_color=114):
             original_size = image.shape[:2]  # 原始尺寸 (height, width)
             ratio = min(target_size[1] / original_size[1], target_size[0] / original_size[0])
@@ -2398,12 +2531,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.check_all_infer.isChecked():
             start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
-
             for i in range(start_index, len(self.imageList)):  # 打开下一个图像
                 image = labelme.utils.img_qt_to_arr(self.image)
                 input_tensors = self.net.get_inputs()
                 self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])
-
+                task = self.net.get_modelmeta().custom_metadata_map['task']
                 for input_tensor in input_tensors:
                     input_info = {
                         "name": input_tensor.name,
@@ -2419,41 +2551,76 @@ class MainWindow(QtWidgets.QMainWindow):
                 blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
                 inputs = {self.net.get_inputs()[0].name: blob}
                 pred = self.net.run(None, inputs)[0]
-                polygon = []
-                pred = np.squeeze(pred)
-                pred = np.transpose(pred, (1, 0))
-                pred_class = pred[..., 4:]
-                pred_conf = np.max(pred_class, axis=-1)
-                pred = np.insert(pred, 4, pred_conf, axis=-1)
-                result = nms(pred, 0.4, 0.45)
+                if task == "detect":
+                    polygon = []
+                    pred = np.squeeze(pred)
+                    pred = np.transpose(pred, (1, 0))
+                    pred_class = pred[..., 4:]
+                    pred_conf = np.max(pred_class, axis=-1)
+                    pred = np.insert(pred, 4, pred_conf, axis=-1)
+                    result = nms(pred, 0.4, 0.45)
 
-                for detection in result:
-                    x_center, y_center, w, h, score, class_id = detection
-                    # ymin = ymin + 2
-                    # xmin = xmin + 1
+                    for detection in result:
+                        x_center, y_center, w, h, score, class_id = detection
+                        # ymin = ymin + 2
+                        # xmin = xmin + 1
 
-                    detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
-                              int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
+                        detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
+                                  int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
 
-                    points0 = [detect[0], detect[1]]
-                    points1 = [detect[2], detect[3]]
-                    points0[0] = max(0, min(points0[0], image_width - 1))
-                    points0[1] = max(0, min(points0[1], image_height - 1))
-                    points1[0] = max(0, min(points1[0], image_width - 1))
-                    points1[1] = max(0, min(points1[1], image_height - 1))
-                    polygon.append([class_id, points0, points1])
+                        points0 = [detect[0], detect[1]]
+                        points1 = [detect[2], detect[3]]
+                        points0[0] = max(0, min(points0[0], image_width - 1))
+                        points0[1] = max(0, min(points0[1], image_height - 1))
+                        points1[0] = max(0, min(points1[0], image_width - 1))
+                        points1[1] = max(0, min(points1[1], image_height - 1))
+                        polygon.append([class_id, points0, points1])
 
-
-                label_file = osp.splitext(self.imagePath)[0] + ".json"
-                if self.output_dir:
-                    label_file_without_path = osp.basename(label_file)
-                    label_file = osp.join(self.output_dir, label_file_without_path)
-                self.save_AI_Labels(label_file, polygon)
-                self.openNextImg()
+                    label_file = osp.splitext(self.imagePath)[0] + ".json"
+                    if self.output_dir:
+                        label_file_without_path = osp.basename(label_file)
+                        label_file = osp.join(self.output_dir, label_file_without_path)
+                    self.save_AI_Labels(label_file, polygon)
+                    self.openNextImg()
+                elif task == "obb":
+                    polygon = []
+                    pred = np.transpose(pred, (0, 2, 1))
+                    conf_thres = 0.25
+                    iou_thres = 0.45
+                    boxes = []
+                    for item in pred[0]:
+                        cx, cy, w, h = item[:4]
+                        angle = item[-1]
+                        label = item[4:-1].argmax()
+                        confidence = item[4 + label]
+                        if confidence < conf_thres:
+                            continue
+                        boxes.append([cx, cy, w, h, angle, confidence, label])
+                    boxes = np.array(boxes)
+                    boxes = sorted(boxes.tolist(), key=lambda x: x[5], reverse=True)
+                    boxes = obb_nms(np.array(boxes), iou_thres)
+                    confs = [box[5] for box in boxes]
+                    classes = [int(box[6]) for box in boxes]
+                    if len(boxes) != 0:
+                        xyxy_boxes = xywhr2xyxyxyxy(np.array(boxes)[..., :5])
+                    else:
+                        xyxy_boxes = []
+                    for i, box in enumerate(xyxy_boxes):
+                        box = box / ratio
+                        box[:, 0] = np.clip(box[:, 0], 0, image_width - 1)  # 限制 x 坐标范围
+                        box[:, 1] = np.clip(box[:, 1], 0, image_height - 1)  # 限制 y 坐标范围
+                        polygon.append([classes[i], box[0], box[1], box[2], box[3], boxes[i][4]])
+                    label_file = osp.splitext(self.imagePath)[0] + ".json"
+                    if self.output_dir:
+                        label_file_without_path = osp.basename(label_file)
+                        label_file = osp.join(self.output_dir, label_file_without_path)
+                    self.save_AI_obb_labels(label_file, polygon)
+                    self.openNextImg()
         else:
             image = labelme.utils.img_qt_to_arr(self.image)
             input_tensors = self.net.get_inputs()
             self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])  # 该 API 会返回列表
+            task = self.net.get_modelmeta().custom_metadata_map['task']
             for input_tensor in input_tensors:  # 因为可能有多个输入，所以为列表
                 input_info = {
                     "name": input_tensor.name,
@@ -2468,34 +2635,66 @@ class MainWindow(QtWidgets.QMainWindow):
             blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
             inputs = {self.net.get_inputs()[0].name: blob}
             pred = self.net.run(None, inputs)[0]
-            polygon = []
-            pred = np.squeeze(pred)
-            pred = np.transpose(pred, (1, 0))
-            pred_class = pred[..., 4:]
-            pred_conf = np.max(pred_class, axis=-1)
-            pred = np.insert(pred, 4, pred_conf, axis=-1)
-            result = nms(pred, 0.25, 0.45)
-            for detection in result:
-                x_center, y_center, w, h, score, class_id = detection
-                # ymin = ymin + 2
-                # xmin = xmin + 1
+            if task == "obb":
+                polygon = []
+                pred = np.transpose(pred, (0, 2, 1))
+                conf_thres = 0.25
+                iou_thres = 0.45
+                boxes = []
+                for item in pred[0]:
+                    cx, cy, w, h = item[:4]
+                    angle = item[-1]
+                    label = item[4:-1].argmax()
+                    confidence = item[4 + label]
+                    if confidence < conf_thres:
+                        continue
+                    boxes.append([cx, cy, w, h, angle, confidence, label])
+                boxes = np.array(boxes)
+                boxes = sorted(boxes.tolist(), key=lambda x: x[5], reverse=True)
+                boxes = obb_nms(np.array(boxes), iou_thres)
+                confs = [box[5] for box in boxes]
+                classes = [int(box[6]) for box in boxes]
+                if len(boxes) != 0:
+                    xyxy_boxes = xywhr2xyxyxyxy(np.array(boxes)[..., :5])
+                else:
+                    xyxy_boxes = []
+                for i, box in enumerate(xyxy_boxes):
+                    box = box / ratio
+                    box[:, 0] = np.clip(box[:, 0], 0, image_width - 1)  # 限制 x 坐标范围
+                    box[:, 1] = np.clip(box[:, 1], 0, image_height - 1)  # 限制 y 坐标范围
+                    polygon.append([classes[i], box[0], box[1], box[2], box[3], boxes[i][4]])
+                label_file = osp.splitext(self.imagePath)[0] + ".json"
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = osp.join(self.output_dir, label_file_without_path)
+                self.save_AI_obb_labels(label_file, polygon)
+                self.loadFile(self.filename)
+            elif task == "detect":
+                polygon = []
+                pred = np.squeeze(pred)
+                pred = np.transpose(pred, (1, 0))
+                pred_class = pred[..., 4:]
+                pred_conf = np.max(pred_class, axis=-1)
+                pred = np.insert(pred, 4, pred_conf, axis=-1)
+                result = nms(pred, 0.25, 0.45)
+                for detection in result:
+                    x_center, y_center, w, h, score, class_id = detection
+                    detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
+                              int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
 
-                detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
-                          int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
-
-                points0 = [detect[0], detect[1]]
-                points1 = [detect[2], detect[3]]
-                points0[0] = max(0, min(points0[0], image_width - 1))
-                points0[1] = max(0, min(points0[1], image_height - 1))
-                points1[0] = max(0, min(points1[0], image_width - 1))
-                points1[1] = max(0, min(points1[1], image_height - 1))
-                polygon.append([class_id, points0, points1])
-            label_file = osp.splitext(self.imagePath)[0] + ".json"
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = osp.join(self.output_dir, label_file_without_path)
-            self.save_AI_Labels(label_file, polygon)
-            self.loadFile(self.filename)
+                    points0 = [detect[0], detect[1]]
+                    points1 = [detect[2], detect[3]]
+                    points0[0] = max(0, min(points0[0], image_width - 1))
+                    points0[1] = max(0, min(points0[1], image_height - 1))
+                    points1[0] = max(0, min(points1[0], image_width - 1))
+                    points1[1] = max(0, min(points1[1], image_height - 1))
+                    polygon.append([class_id, points0, points1])
+                label_file = osp.splitext(self.imagePath)[0] + ".json"
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = osp.join(self.output_dir, label_file_without_path)
+                self.save_AI_Labels(label_file, polygon)
+                self.loadFile(self.filename)
 
     def Run_Text2Label(self, _value=False):
         if self.check_all_infer.isChecked():
@@ -2599,9 +2798,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def Video_slice(self, _value=False):
         dialog = Video_slice_Dialog()
         dialog.exec_()
+
     def Data_augmentation(self, _value=False):
         dialog = Data_augmentation_Dialog()
         dialog.exec_()
+
     def Slice_Dataset(self, _value=False):
         dialog = Slice_dataset()
         dialog.exec_()

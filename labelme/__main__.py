@@ -173,7 +173,7 @@ def main():
     win = MainWindow(
         config=config,
         filename=filename,
-        output_file=output_file,
+        output_file=output_file, 
         output_dir=output_dir,
     )
 

@@ -99,7 +99,7 @@ shortcuts:
   rotate: null
   dataset: null
   yolo: null
-  image_pass: S
+  image_pass: null
   image_unpass: null
 
   open_next: [D, Ctrl+Shift+D]
@@ -133,6 +133,6 @@ shortcuts:
   show_all_polygons: null
   hide_all_polygons: null
   toggle_all_polygons: T
-  Text2Label: F
+  Text2Label: null
   video_slice: null
   data_augmentation: null

@@ -14,12 +14,12 @@ class DatasetDialog(QtWidgets.QDialog):
         self.value_inputs = []
         layout =QtWidgets.QVBoxLayout()
         # 添加下拉选择控件
-        type_label = QtWidgets.QLabel("Type:")
+        type_label = QtWidgets.QLabel("type:")
         self.type_combobox = QtWidgets.QComboBox()
-        self.type_combobox.addItem("yolo_hbb")
-        self.type_combobox.addItem("yolo_obb")
-        self.type_combobox.addItem("coco")
-        self.type_combobox.addItem("voc")
+        self.type_combobox.addItem("YOLO_HBB")
+        self.type_combobox.addItem("YOLO_OBB")
+        self.type_combobox.addItem("COCO")
+        self.type_combobox.addItem("VOC")
         layout.addWidget(type_label)
         layout.addWidget(self.type_combobox)
 
@@ -91,15 +91,15 @@ class DatasetDialog(QtWidgets.QDialog):
         folder_data = [folder_input.text() for folder_input in self.folder_inputs]
         value_data = [value_input.text() for value_input in self.value_inputs]
         type_data = self.type_combobox.currentText()
-        if type_data=='coco':
+        if type_data=='COCO':
             result = dataset.CocoGenerator(folder_data, value_data)
-        elif type_data=='yolo_hbb':
+        elif type_data=='YOLO_HBB':
             sequence=self.label_sequence.text()
             result =dataset.YoloGenerator(folder_data, value_data, sequence)
-        elif type_data=='yolo_obb':
+        elif type_data=='YOLO_OBB':
             sequence=self.label_sequence.text()
             result =dataset.Yolo_obbGenerator(folder_data, value_data, sequence)
-        elif type_data == 'voc':
+        elif type_data == 'VOC':
             result = dataset.VocGenerator(folder_data, value_data)
         #键值对
         # folder_data=['C:/Users/fjl\Desktop\data/anno', 'C:/Users/fjl/Desktop/data/img', 'C:/Users/fjl\Desktop\data']

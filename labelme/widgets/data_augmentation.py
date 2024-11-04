@@ -3,6 +3,7 @@ import cv2
 import os
 import numpy as np
 
+
 class Data_augmentation_Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15,8 +16,8 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         # 添加下拉选择控件
         type_label = QtWidgets.QLabel("Type:")
         self.type_combobox = QtWidgets.QComboBox()
-        self.type_combobox.addItem("yolo")  # 添加选择类型
-
+        self.type_combobox.addItem("YOLO_HBB")  # 添加选择类型
+        self.type_combobox.addItem("YOLO_OBB")  # 添加选择类型
         layout.addWidget(type_label)
         layout.addWidget(self.type_combobox)
 
@@ -265,6 +266,7 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
             self.progress_bar.setValue(progress)
         self.progress_bar.setValue(100)  # 完成后将进度条设置为100%
         QtWidgets.QMessageBox.information(self, "Done", "All images processed successfully!")
+
     def apply_rotation(self, img, yolo_data):
         """对图像和YOLO标注执行旋转90度操作"""
         # 图像顺时针旋转90度
@@ -278,12 +280,13 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
 
     def rotate_yolo_label_90(self, label, img_shape):
         """旋转YOLO格式标注，90度顺时针"""
-        x, y, w, h = label[1:]
-        img_h, img_w = img_shape[:2]
-        # 将坐标从原点旋转到新位置
-        new_x = 1 - y
-        new_y = x
-        return [label[0], new_x, new_y, h, w]
+        type_data = self.type_combobox.currentText()
+        if type_data == 'YOLO_HBB':
+            x, y, w, h = label[1:]
+            return [label[0], 1 - y, x, h, w]
+        if type_data == 'YOLO_OBB':
+            x1, y1, x2, y2, x3, y3, x4, y4 = label[1:]
+            return [label[0], 1 - y1, x1, 1 - y2, x2,1 - y3, x3,1 - y4, x4]
 
     def apply_gaussian_noise(self, img, noise_level):
         """给图像添加高斯噪声"""
@@ -308,19 +311,35 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
 
     def flip_yolo_labels_horizontal(self, yolo_data):
         """水平翻转YOLO标注"""
-        flipped_data = []
-        for label in yolo_data:
-            x, y, w, h = label[1:]
-            flipped_data.append([label[0], 1 - x, y, w, h])
-        return flipped_data
+        type_data = self.type_combobox.currentText()
+        if type_data == 'YOLO_HBB':
+            flipped_data = []
+            for label in yolo_data:
+                x, y, w, h = label[1:]
+                flipped_data.append([label[0], 1 - x, y, w, h])
+            return flipped_data
+        if type_data == 'YOLO_OBB':
+            flipped_data = []
+            for label in yolo_data:
+                x1, y1, x2, y2, x3, y3, x4, y4 = label[1:]
+                flipped_data.append([label[0], 1 - x1, y1, 1 - x2, y2, 1 - x3, y3, 1 - x4, y4])
+            return flipped_data
 
     def flip_yolo_labels_vertical(self, yolo_data):
         """垂直翻转YOLO标注"""
-        flipped_data = []
-        for label in yolo_data:
-            x, y, w, h = label[1:]
-            flipped_data.append([label[0], x, 1 - y, w, h])
-        return flipped_data
+        type_data = self.type_combobox.currentText()
+        if type_data == 'YOLO_HBB':
+            flipped_data = []
+            for label in yolo_data:
+                x, y, w, h = label[1:]
+                flipped_data.append([label[0], x, 1 - y, w, h])
+            return flipped_data
+        if type_data == 'YOLO_OBB':
+            flipped_data = []
+            for label in yolo_data:
+                x1, y1, x2, y2, x3, y3, x4, y4 = label[1:]
+                flipped_data.append([label[0], x1, 1 - y1, x2, 1 - y2, x3, 1 - y3, x4, 1 - y4])
+            return flipped_data
 
     def load_yolo_labels(self, txt_path):
         """加载YOLO格式的标注"""
@@ -329,7 +348,7 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         yolo_data = []
         for line in lines:
             parts = line.split()
-            parts[0] = int(parts[0])  # 将第一个数据转换为int
+            parts[0] = int(float(parts[0]))  # 将第一个数据转换为int
             parts[1:] = map(float, parts[1:])  # 将其余数据转换为float
             yolo_data.append(parts)
         return yolo_data

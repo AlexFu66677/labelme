@@ -118,6 +118,9 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
         # This function is called to update the size of the image display based on the input value
         self.max_size = int(self.size_input.text())
 
+    def errorMessage(self, title, message):
+        return QtWidgets.QMessageBox.critical(self, title, f"<p><b>{title}</b></p>{message}")
+
     def display_image_with_annotations(self, image_path):
         type_data = self.type_combobox.currentText()
         if type_data == 'YOLO_OBB':
@@ -158,26 +161,30 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
                 painter.setFont(font)
                 with open(label_path, 'r') as f:
                     for line in f:
-                        cls, x1,y1 ,x2,y2,x3,y3,x4,y4 = map(float, line.split())
-                        cls = int(cls)  # Ensure the class label is an integer
-                        label = cls
-                        x1 *= scaled_pixmap.width()
-                        y1 *= scaled_pixmap.height()
-                        x2 *= scaled_pixmap.width()
-                        y2 *= scaled_pixmap.height()
-                        x3 *= scaled_pixmap.width()
-                        y3 *= scaled_pixmap.height()
-                        x4 *= scaled_pixmap.width()
-                        y4 *= scaled_pixmap.height()
-                        polygon = QtGui.QPolygonF()
-                        polygon.append(QtCore.QPointF(int(x1), int(y1)))
-                        polygon.append(QtCore.QPointF(int(x2), int(y2)))
-                        polygon.append(QtCore.QPointF(int(x3), int(y3)))
-                        polygon.append(QtCore.QPointF(int(x4), int(y4)))
-                        # Draw the bounding box
-                        painter.drawPolygon(polygon)
-                        # Draw the label text at the top-left corner of the bounding box
-                        painter.drawText(x1, y1 - 10, str(label))
+                        try:
+                            cls, x1, y1, x2, y2, x3, y3, x4, y4 = map(float, line.split())
+                            cls = int(cls)  # Ensure the class label is an integer
+                            label = cls
+                            x1 *= scaled_pixmap.width()
+                            y1 *= scaled_pixmap.height()
+                            x2 *= scaled_pixmap.width()
+                            y2 *= scaled_pixmap.height()
+                            x3 *= scaled_pixmap.width()
+                            y3 *= scaled_pixmap.height()
+                            x4 *= scaled_pixmap.width()
+                            y4 *= scaled_pixmap.height()
+                            polygon = QtGui.QPolygonF()
+                            polygon.append(QtCore.QPointF(int(x1), int(y1)))
+                            polygon.append(QtCore.QPointF(int(x2), int(y2)))
+                            polygon.append(QtCore.QPointF(int(x3), int(y3)))
+                            polygon.append(QtCore.QPointF(int(x4), int(y4)))
+                            # Draw the bounding box
+                            painter.drawPolygon(polygon)
+                            # Draw the label text at the top-left corner of the bounding box
+                            painter.drawText(x1, y1 - 10, str(label))
+                        except:
+                            self.errorMessage("Error", self.tr("Invalid label '{}'").format(label_path))
+                            break
             painter.end()
         if type_data == 'YOLO_HBB':
             # Load the image
@@ -227,25 +234,30 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
 
                 with open(label_path, 'r') as f:
                     for line in f:
-                        cls, x_center, y_center, width, height = map(float, line.split())
-                        cls = int(cls)  # Ensure the class label is an integer
-                        label = cls
-                        x_center *= scaled_pixmap.width()
-                        y_center *= scaled_pixmap.height()
-                        width *= scaled_pixmap.width()
-                        height *= scaled_pixmap.height()
+                        try:
+                            cls, x_center, y_center, width, height = map(float, line.split())
+                            cls = int(cls)  # Ensure the class label is an integer
+                            label = cls
+                            x_center *= scaled_pixmap.width()
+                            y_center *= scaled_pixmap.height()
+                            width *= scaled_pixmap.width()
+                            height *= scaled_pixmap.height()
 
-                        # Calculate the bounding box coordinates
-                        x1 = int(x_center - width / 2)
-                        y1 = int(y_center - height / 2)
-                        x2 = int(x_center + width / 2)
-                        y2 = int(y_center + height / 2)
+                            # Calculate the bounding box coordinates
+                            x1 = int(x_center - width / 2)
+                            y1 = int(y_center - height / 2)
+                            x2 = int(x_center + width / 2)
+                            y2 = int(y_center + height / 2)
 
-                        # Draw the bounding box
-                        painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+                            # Draw the bounding box
+                            painter.drawRect(x1, y1, x2 - x1, y2 - y1)
 
-                        # Draw the label text at the top-left corner of the bounding box
-                        painter.drawText(x1, y1 - 10, str(label))
+                            # Draw the label text at the top-left corner of the bounding box
+                            painter.drawText(x1, y1 - 10, str(label))
+                        except:
+                            self.errorMessage("Error", self.tr("Invalid label '{}'").format(label_path))
+                            break
+
             painter.end()
         # Display the image with annotations
         self.image_label.setPixmap(result_pixmap)
