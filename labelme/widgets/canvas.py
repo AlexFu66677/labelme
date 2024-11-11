@@ -697,6 +697,8 @@ class Canvas(QtWidgets.QWidget):
             p2, p3, p4 = self.get_adjoint_points(
                 shape.direction, shape[sindex], pos, index
             )
+            if any(self.outOfPixmap(p) for p in [pos, p2, p3, p4]):
+                return False
             shape.moveVertexBy(index, pos - point)
             lindex = (index + 1) % 4
             rindex = (index + 3) % 4
@@ -762,8 +764,8 @@ class Canvas(QtWidgets.QWidget):
         for j, p in enumerate(new_shape.points):
             pos = self.rotate_point(p, center, theta)
             # TODO: Reserved for now
-            # if self.out_off_pixmap(pos):
-            #     return False  # No need to rotate
+            if self.outOfPixmap(pos):
+                return False  # No need to rotate
             new_shape.points[j] = pos
         new_shape.direction = (new_shape.direction - theta) % (2 * math.pi)
         self.selectedShapes[i].points = new_shape.points

@@ -933,7 +933,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.text2label_model = None
 
         self.check_all_infer = QtWidgets.QCheckBox("推理全部图像", self)
-        self.check_save_existing_label = QtWidgets.QCheckBox("保存已有标签", self)
+        self.check_save_existing_label = QtWidgets.QCheckBox("保留已有标签", self)
         Check_AI_config_layout = QtWidgets.QWidgetAction(self)
         Check_AI_config_layout.setDefaultWidget(QtWidgets.QWidget())
         Check_AI_config_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
@@ -2740,7 +2740,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if image.shape[-1] == 1:
                 image = np.squeeze(image, axis=-1)
             # image = Image.fromarray(image)
-            boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+            if self.text2label_model:
+               boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+            else:
+                self.errorMessage(
+                    "No onnx model",
+                    "You must choose an onnx model.",
+                )
+                return
 
             size = image.shape
             pred_dict = {
