@@ -118,8 +118,11 @@ class Slice_dataset(QtWidgets.QDialog):
 
         def process_file(image_file, label_file):
             image = cv2.imread(str(image_file))
-            slice_height, slice_width = slice_size,slice_size
             height, width, _ = image.shape
+
+            slice_height = min(slice_size, height)
+            slice_width = min(slice_size, width)
+
             if height <= slice_height and width <= slice_width:
                 return
             with open(label_file, 'r') as f:

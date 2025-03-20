@@ -20,7 +20,6 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         self.type_combobox.addItem("H265")
         self.type_combobox.addItem("H264")
 
-
         layout.addWidget(type_label)
         layout.addWidget(self.type_combobox)
 
@@ -34,6 +33,17 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         video_input_layout.addWidget(video_input_button)
         layout.addWidget(video_input_label)
         layout.addLayout(video_input_layout)
+
+        videopath_label = QtWidgets.QLabel("video_path_input:")
+        self.videopath_input = QtWidgets.QLineEdit()
+        self.videopath_input.setReadOnly(True)
+        videopath_input_button = QtWidgets.QPushButton("Select")
+        videopath_input_button.clicked.connect(self.select_videopath_file)
+        videopath_input_layout = QtWidgets.QHBoxLayout()
+        videopath_input_layout.addWidget(self.videopath_input)
+        videopath_input_layout.addWidget(videopath_input_button)
+        layout.addWidget(videopath_label)
+        layout.addLayout(videopath_input_layout)
 
         image_output_label = QtWidgets.QLabel("output_dir:")
         self.image_output = QtWidgets.QLineEdit()
@@ -64,6 +74,9 @@ class Video_slice_Dialog(QtWidgets.QDialog):
 
         layout.addLayout(value_layout)
 
+        self.merge_checkbox = QtWidgets.QCheckBox("Merge to MP4")
+        layout.addWidget(self.merge_checkbox)
+
         self.result_label = QtWidgets.QLabel("Result:")
         self.result_text_edit = QtWidgets.QTextEdit()
         self.result_text_edit.setReadOnly(True)
@@ -90,6 +103,13 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         if file_dialog.exec_():
             file_path = file_dialog.selectedFiles()
             self.video_input.setText(file_path[0])
+
+    def select_videopath_file(self):
+        file_dialog = QtWidgets.QFileDialog()
+        file_dialog.setFileMode(QtWidgets.QFileDialog.Directory)
+        file_path = file_dialog.getExistingDirectory(None, "Select Folder", "")
+        if file_path:
+            self.videopath_input.setText(file_path)
 
     def slice_h264(self, input_file, out_dir, step):
         def save_frame(frame, count):
@@ -119,35 +139,95 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         except:
             return "ERROR"
 
-    def slice_h265(self, input_file, out_dir, step):
+    def slice_h265(self, input_file, videopath_input, out_dir, step):
         def save_frame(frame, count):
             video_name = os.path.splitext(os.path.basename(input_file))[0]
             file_name = '{}_{:d}.jpg'.format(video_name, count)
             file_path = os.path.join(out_dir, file_name)
             frame.to_image().save(file_path)
 
-        container = av.open(input_file)
-        stream = container.streams.video[0]
-        try:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                count = 0
-                frame_number = 0
-                futures = []
-                for frame in container.decode(stream):
-                    if frame_number % int(step) == 0:
-                        futures.append(executor.submit(save_frame, frame, count))
+        def batch_save_frame(file_name, frame, count):
+            video_name = os.path.splitext(os.path.basename(file_name))[0]
+            file_name = '{}_{:d}.jpg'.format(video_name, count)
+            file_path = os.path.join(out_dir, file_name)
+            frame.to_image().save(file_path)
+
+        if os.path.isfile(input_file):
+            container = av.open(input_file)
+            stream = container.streams.video[0]
+            try:
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    count = 0
+                    frame_number = 0
+                    futures = []
+                    for frame in container.decode(stream):
                         count += 1
-                    frame_number += 1
-                concurrent.futures.wait(futures)
+                        if frame_number % int(step) == 0:
+                            futures.append(executor.submit(save_frame, frame, count))
+                        frame_number += 1
+                    concurrent.futures.wait(futures)
+                return "DONE"
+            except:
+                return "ERROR"
+        if os.path.isdir(videopath_input):
+            video_exts = (".mp4", ".avi", ".mov", ".mkv", ".flv", ".h265", ".H265")
+            for file in os.listdir(videopath_input):
+                if file.endswith(video_exts):
+                    input_path = os.path.join(videopath_input, file)
+                    container = av.open(input_path)
+                    stream = container.streams.video[0]
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            count = 0
+                            frame_number = 0
+                            futures = []
+                            for frame in container.decode(stream):
+                                count += 1
+                                if frame_number % int(step) == 0:
+                                    futures.append(executor.submit(batch_save_frame, input_path, frame, count))
+                                frame_number += 1
+                            concurrent.futures.wait(futures)
+                    except:
+                        frame_number = 0
+
             return "DONE"
-        except:
-            return "ERROR"
+
+    def merge_images_to_video(self, image_dir, output_video):
+        try:
+            images = sorted(
+                [img for img in os.listdir(image_dir) if img.endswith(".jpg")],
+                key=lambda x: int(x.split('_')[-1].split('.')[0])  # 按序号排序
+            )
+            if not images:
+                return "No images to merge"
+            first_image_path = os.path.join(image_dir, images[0])
+            first_frame = cv2.imread(first_image_path)
+            height, width, layers = first_frame.shape
+
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_video, fourcc, 30, (width, height))
+
+            for image in images:
+                frame = cv2.imread(os.path.join(image_dir, image))
+                out.write(frame)
+
+            out.release()
+            return "Video merged successfully"
+        except Exception as e:
+            return f"Error merging video: {str(e)}"
 
     def start(self):
         value_data = [value_input.text() for value_input in self.value_inputs]
         type_data = self.type_combobox.currentText()
+        output_dir = self.image_output.text()
         if type_data == 'H264':
-            result = self.slice_h264(self.video_input.text(), self.image_output.text(), value_data[0])
+            result = self.slice_h264(self.video_input.text(), self.videopath_input.text(), self.image_output.text(),
+                                     value_data[0])
         elif type_data == 'H265':
-            result = self.slice_h265(self.video_input.text(), self.image_output.text(), value_data[0])
+            result = self.slice_h265(self.video_input.text(), self.videopath_input.text(), self.image_output.text(),
+                                     value_data[0])
+        if self.merge_checkbox.isChecked() and result == "DONE":
+            video_output_path = os.path.join(output_dir, "merged_output.mp4")
+            merge_result = self.merge_images_to_video(output_dir, video_output_path)
+            result += f"\n{merge_result}"
         self.result_text_edit.setText(result)

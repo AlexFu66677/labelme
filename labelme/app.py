@@ -168,12 +168,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fileSearch = QtWidgets.QLineEdit()
         self.fileSearch.setPlaceholderText(self.tr("Search Filename"))
         self.fileSearch.textChanged.connect(self.fileSearchChanged)
+        self.annotationInfo = QtWidgets.QLabel()
+        self.annotationInfo.setAlignment(QtCore.Qt.AlignCenter)  # 文本居中
+        self.annotationInfo.setText("Current: 0 | Total: 0")  # 默认文本
+
         self.fileListWidget = QtWidgets.QListWidget()
         self.fileListWidget.itemSelectionChanged.connect(self.fileSelectionChanged)
         fileListLayout = QtWidgets.QVBoxLayout()
         fileListLayout.setContentsMargins(0, 0, 0, 0)
         fileListLayout.setSpacing(0)
         fileListLayout.addWidget(self.fileSearch)
+        fileListLayout.addWidget(self.annotationInfo)
         fileListLayout.addWidget(self.fileListWidget)
         self.file_dock = QtWidgets.QDockWidget(self.tr("File List"), self)
         self.file_dock.setObjectName("Files")
@@ -271,11 +276,11 @@ class MainWindow(QtWidgets.QMainWindow):
             enabled=False,
         )
         video_object = action(
-            self.tr("&视频目标检测"),
+            self.tr("&标注映射"),
             self.video_object_detection,
             shortcuts["video_object"],
             "video_object",
-            self.tr("视频帧目标检测"),
+            self.tr("标注映射"),
             enabled=False,
         )
         image_pass = action(
@@ -940,6 +945,19 @@ class MainWindow(QtWidgets.QMainWindow):
         Check_AI_config_layout.defaultWidget().layout().addWidget(self.check_all_infer)
         Check_AI_config_layout.defaultWidget().layout().addWidget(self.check_save_existing_label)
 
+        self.check_Lucas_Kanade = QtWidgets.QCheckBox("L-K", self)
+        self.check_SIFT = QtWidgets.QCheckBox("SIFT", self)
+        self.check_SIFT.setChecked(True)
+        self.homography_group = QtWidgets.QButtonGroup(self)
+        self.homography_group.addButton(self.check_Lucas_Kanade)
+        self.homography_group.addButton(self.check_SIFT)
+        self.homography_group.setExclusive(True)  # 互斥模式
+        Check_Homography_layout = QtWidgets.QWidgetAction(self)
+        Check_Homography_layout.setDefaultWidget(QtWidgets.QWidget())
+        Check_Homography_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        Check_Homography_layout.defaultWidget().layout().addWidget(self.check_Lucas_Kanade)
+        Check_Homography_layout.defaultWidget().layout().addWidget(self.check_SIFT)
+
         # 创建一个主widget和布局
         selectAiWidget = QtWidgets.QWidget()
         selectAiLayout = QtWidgets.QVBoxLayout(selectAiWidget)
@@ -1071,12 +1089,14 @@ class MainWindow(QtWidgets.QMainWindow):
             save,
             deleteFile,
             None,
-            createMode,
+            createRectangleMode,
             editMode,
             duplicate,
             delete,
             undo,
-            brightnessContrast,
+            None,
+            video_object,
+            Check_Homography_layout,
             None,
             fitWindow,
             zoom,
@@ -1592,9 +1612,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return (0, 255, 0)
 
     def remLabels(self, shapes):
-        for shape in shapes:
-            item = self.labelList.findItemByShape(shape)
-            self.labelList.removeItem(item)
+        try:
+            for shape in shapes:
+                item = self.labelList.findItemByShape(shape)
+                self.labelList.removeItem(item)
+        except:
+            return
 
     def loadShapes(self, shapes, replace=True):
         self._noSelectionSlot = True
@@ -2061,6 +2084,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.resetState()
         self.canvas.setEnabled(False)
+
         if filename is None:
             filename = self.settings.value("filename", "")
         filename = str(filename)
@@ -2126,6 +2150,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         self.image = image
         self.filename = filename
+        total_files = len(self.imageList)  # 总标注数量
+        current_index = self.imageList.index(filename) + 1  # 当前标注索引 (从1开始)
+        self.annotationInfo.setText(f"Current: {current_index} | Total: {total_files} ")
         if self._config["keep_prev"]:
             prev_shapes = self.canvas.shapes
         self.canvas.loadPixmap(QtGui.QPixmap.fromImage(image))
@@ -2339,46 +2366,66 @@ class MainWindow(QtWidgets.QMainWindow):
             return 0
         else:
             pre_image_name = self.imageList[index - 1]
-            pre_image = cv2.imread(pre_image_name)
-            cur_image = cv2.imread(self.filename)
-            sift = cv2.SIFT_create()
-            keypoints1, descriptors1 = sift.detectAndCompute(pre_image, None)
-            keypoints2, descriptors2 = sift.detectAndCompute(cur_image, None)
-            # 创建FLANN匹配器
-            FLANN_INDEX_KDTREE = 0
-            index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-            search_params = dict(checks=50)
-            flann = cv2.FlannBasedMatcher(index_params, search_params)
+            pre_image = cv2.imread(pre_image_name, cv2.IMREAD_GRAYSCALE)
+            cur_image = cv2.imread(self.filename, cv2.IMREAD_GRAYSCALE)
+            image_height, image_width = cur_image.shape[:2]
+            if self.check_Lucas_Kanade.isChecked():
+                feature_params = dict(maxCorners=500, qualityLevel=0.1, minDistance=10, blockSize=10)
+                prev_pts = cv2.goodFeaturesToTrack(pre_image, mask=None, **feature_params)
+                lk_params = dict(winSize=(20, 20), maxLevel=3,
+                                 criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03))
+                cur_pts, status, err = cv2.calcOpticalFlowPyrLK(pre_image, cur_image, prev_pts, None, **lk_params)
+                good_prev_pts = prev_pts[status == 1]
+                good_cur_pts = cur_pts[status == 1]
 
-            # 使用KNN匹配特征点
-            matches = flann.knnMatch(descriptors1, descriptors2, k=2)
-            # 应用比率测试来选择良好的匹配点
-            good_matches = []
-            for m, n in matches:
-                if m.distance < 0.7 * n.distance:
-                    good_matches.append(m)
+                # 计算单应性矩阵
+                H, mask = cv2.findHomography(good_prev_pts, good_cur_pts, cv2.RANSAC, 5.0)
+            if self.check_SIFT.isChecked():
+                sift = cv2.SIFT_create()
+                keypoints1, descriptors1 = sift.detectAndCompute(pre_image, None)
+                keypoints2, descriptors2 = sift.detectAndCompute(cur_image, None)
+                # 创建FLANN匹配器
+                FLANN_INDEX_KDTREE = 0
+                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+                search_params = dict(checks=50)
+                flann = cv2.FlannBasedMatcher(index_params, search_params)
 
-            src_pts = np.float32([keypoints1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            # 使用RANSAC算法计算单应性矩阵H
-            H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-            json_path = (pre_image_name).replace('.jpg', '.json')
+                # 使用KNN匹配特征点
+                matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+                # 应用比率测试来选择良好的匹配点
+                good_matches = []
+                for m, n in matches:
+                    if m.distance < 0.7 * n.distance:
+                        good_matches.append(m)
+
+                src_pts = np.float32([keypoints1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                # 使用RANSAC算法计算单应性矩阵H
+                H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            json_path = os.path.splitext(pre_image_name)[0] + '.json'
             polygon = []
             with open(json_path, 'r') as f:
                 data = json.load(f)
             for shape in data['shapes']:
-                # src_point0 = np.array([shape['points'][0][0], shape['points'][0][1]])
-                # src_point1 = np.array([shape['points'][1][0], shape['points'][1][1]])
-
                 src_point0 = np.array([[shape['points'][0][0], shape['points'][0][1]]], dtype=np.float32)
                 src_point1 = np.array([[shape['points'][1][0], shape['points'][1][1]]], dtype=np.float32)
                 points0 = cv2.perspectiveTransform(src_point0.reshape(-1, 1, 2), H).tolist()
                 points1 = cv2.perspectiveTransform(src_point1.reshape(-1, 1, 2), H).tolist()
-                class_id = 0
-
+                class_id = shape['label']
                 points0 = [int(points0[0][0][0]), int(points0[0][0][1])]
                 points1 = [int(points1[0][0][0]), int(points1[0][0][1])]
-                polygon.append([class_id, points0, points1])
+                # points0[0] = max(0, min(points0[0], image_width - 1))
+                # points0[1] = max(0, min(points0[1], image_height - 1))
+                # points1[0] = max(0, min(points1[0], image_width - 1))
+                # points1[1] = max(0, min(points1[1], image_height - 1))
+                if 0 <= points0[0] < image_width and 0 <= points0[1] < image_height and 0 <= points1[0] < image_width and 0 <= points1[1] < image_height:
+                    # 确保坐标在图像范围内
+                    points0[0] = max(0, min(points0[0], image_width - 1))
+                    points0[1] = max(0, min(points0[1], image_height - 1))
+                    points1[0] = max(0, min(points1[0], image_width - 1))
+                    points1[1] = max(0, min(points1[1], image_height - 1))
+                    polygon.append([class_id, points0, points1])
+                # polygon.append([class_id, points0, points1])
             label_file = osp.splitext(self.imagePath)[0] + ".json"
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
@@ -2456,6 +2503,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pt3 = ctr - vec1 - vec2
             pt4 = ctr - vec1 + vec2
 
+            # return [pt1, pt2, pt3, pt4]
             return np.stack([pt1, pt2, pt3, pt4], axis=-2)
 
         def getIou(box1, box2, inter_area):
@@ -2628,8 +2676,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     "shape": input_tensor.shape,
                 }
             img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+            image_show = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
             image_height, image_width = img.shape[:2]
             img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
+            img_r = img.copy()
             img = img / 255
             img = img.astype(np.float32)
             blob = np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0)
@@ -2654,19 +2704,116 @@ class MainWindow(QtWidgets.QMainWindow):
                 boxes = obb_nms(np.array(boxes), iou_thres)
                 confs = [box[5] for box in boxes]
                 classes = [int(box[6]) for box in boxes]
+                # if len(boxes) != 0:
+                #     xyxy_boxes = xywhr2xyxyxyxy(np.array(boxes)[..., :5])
+                # else:
+                #     xyxy_boxes = []
+                xyxy_boxes = []
                 if len(boxes) != 0:
-                    xyxy_boxes = xywhr2xyxyxyxy(np.array(boxes)[..., :5])
-                else:
-                    xyxy_boxes = []
+                    for i, box in enumerate(boxes):
+                        cx, cy, w, h = box[0], box[1], box[2] + 2, box[3] + 2
+                        if min(box[2], box[3]) / max(box[2], box[3]) > 0.8:
+                            radius = np.sqrt((w / 2) ** 2 + (h / 2) ** 2)
+                            # 创建一个圆形掩码
+                            mask = np.zeros_like(img, dtype=np.uint8)
+                            cv2.circle(mask, (int(cx), int(cy)), int(radius), (255, 255, 255), -1)
+                            # 提取圆形区域
+                            circular_region = cv2.bitwise_and(img_r, mask)
+                            # 灰度转换和边缘检测
+                            gray = cv2.cvtColor(circular_region, cv2.COLOR_BGR2GRAY)
+                            # edges = cv2.Canny(gray, 50, 150, apertureSize=5)
+                            # output_filename = f"output_with_edge_{i}.png"
+                            # cv2.imwrite(output_filename, gray)
+                            # 直线检测
+                            # lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180, threshold=30,
+                            #                         minLineLength=5, maxLineGap=5)
+                            lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_STD)
+                            lines = lsd.detect(gray)[0]  # 输入灰度图像
+
+                            # 筛选与长或宽最接近的直线
+                            best_line = None
+                            min_diff = float('inf')
+                            if lines is not None:
+                                for idx, line in enumerate(lines):
+                                    x1, y1, x2, y2 = map(int, line[0])
+                                    cv2.line(img_r, (x1, y1), (x2, y2), (0, 255, 0), 1)  # 绿色线，粗细2
+                                    center_dist = abs((y2 - y1) * cx - (x2 - x1) * cy + x2 * y1 - y2 * x1) / np.sqrt(
+                                        (y2 - y1) ** 2 + (x2 - x1) ** 2)
+                                    # expected_dist = (box[2] + box[3]) / 4
+                                    if abs(center_dist - box[2] / 2) > 5 and abs(center_dist - box[3] / 2) > 5:
+                                        continue
+                                    length = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+                                    diff = abs(box[2] + box[3] - 2 * length)
+
+                                    if diff < min_diff:
+                                        min_diff = diff
+                                        best_line = (x1, y1, x2, y2)
+                                if best_line is not None:
+                                    # x1, y1, x2, y2 = best_line
+                                    # cv2.line(img_r, (x1, y1), (x2, y2), (0, 255, 255), 2)  # 绿色线，粗细2
+                                    # sym_x1, sym_y1 = 2 * cx - x1, 2 * cy - y1
+                                    # sym_x2, sym_y2 = 2 * cx - x2, 2 * cy - y2
+                                    # # 所有点的列表
+                                    # points = [np.array((x1, y1)), np.array((x2, y2)), np.array((sym_x1, sym_y1)),
+                                    #           np.array((sym_x2, sym_y2))]
+                                    # xyxy_boxes.append(points)
+                                    x1, y1, x2, y2 = best_line
+                                    cv2.line(img_r, (x1, y1), (x2, y2), (0, 255, 255), 2)  # 绿色线，粗细2
+                                    dx, dy = x2 - x1, y2 - y1
+                                    A = dx ** 2 + dy ** 2
+                                    B = 2 * (dx * (x1 - cx) + dy * (y1 - cy))
+                                    C = (x1 - cx) ** 2 + (y1 - cy) ** 2 - radius ** 2
+                                    D = B ** 2 - 4 * A * C
+                                    t1 = (-B + np.sqrt(D)) / (2 * A)
+                                    t2 = (-B - np.sqrt(D)) / (2 * A)
+
+                                    x1, y1, x2, y2 = x1 + t1 * dx, y1 + t1 * dy, x1 + t2 * dx, y1 + t2 * dy
+
+                                    sym_x1, sym_y1 = 2 * cx - x1, 2 * cy - y1
+                                    sym_x2, sym_y2 = 2 * cx - x2, 2 * cy - y2
+                                    points = [np.array((x1, y1)), np.array((x2, y2)), np.array((sym_x1, sym_y1)),
+                                              np.array((sym_x2, sym_y2))]
+                                    xyxy_boxes.append(points)
+                                else:
+                                    xyxy_boxes.append(xywhr2xyxyxyxy(np.array(box)[:5]))
+                            else:
+                                xyxy_boxes.append(xywhr2xyxyxyxy(np.array(box)[:5]))
+                        else:
+                            xyxy_boxes.append(xywhr2xyxyxyxy(np.array(box)[:5]))
                 for i, box in enumerate(xyxy_boxes):
-                    box = box / ratio
+                    box = np.array(box) / ratio
                     box[:, 0] = np.clip(box[:, 0], 0, image_width - 1)  # 限制 x 坐标范围
                     box[:, 1] = np.clip(box[:, 1], 0, image_height - 1)  # 限制 y 坐标范围
                     polygon.append([classes[i], box[0], box[1], box[2], box[3], boxes[i][4]])
+
                 label_file = osp.splitext(self.imagePath)[0] + ".json"
                 if self.output_dir:
                     label_file_without_path = osp.basename(label_file)
                     label_file = osp.join(self.output_dir, label_file_without_path)
+                output_img_path = osp.splitext(self.imagePath)[0] + "_labeled.png"
+                if self.output_dir:
+                    output_img_path_without_path = osp.basename(output_img_path)
+                    output_img_path = osp.join(self.output_dir, output_img_path_without_path)
+
+                # 绘制多边形
+                for poly in polygon:
+                    cls, p1, p2, p3, p4, angle = poly
+                    points = np.array([p1, p2, p3, p4], dtype=np.int32).reshape((-1, 1, 2))
+                    color = (255, 0, 0)  # 默认绿色
+                    cv2.polylines(image_show, [points], isClosed=True, color=color, thickness=2)
+                    for point in points:
+                        x, y = point[0]  # 提取坐标
+                        text = f"({int(x)}, {int(y)})"
+                        font_scale = 0.4  # 字体大小
+                        thickness = 1  # 字体粗细
+                        text_color = (255, 0, 0)  # 白色字体
+                        cv2.putText(image_show, text, (int(x) + 5, int(y) - 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale,
+                                    text_color, thickness)
+                # 保存标注后的图像
+                image_show = cv2.cvtColor(image_show, cv2.COLOR_RGBA2BGR)
+                cv2.imwrite(output_img_path, image_show)
+                print(f"Labeled image saved to: {output_img_path}")
+
                 self.save_AI_obb_labels(label_file, polygon)
                 self.loadFile(self.filename)
             elif task == "detect":
@@ -2741,7 +2888,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 image = np.squeeze(image, axis=-1)
             # image = Image.fromarray(image)
             if self.text2label_model:
-               boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
+                boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
             else:
                 self.errorMessage(
                     "No onnx model",

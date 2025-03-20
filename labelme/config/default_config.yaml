@@ -17,7 +17,7 @@ validate_label: null
 
 default_shape_color: [0, 255, 0]
 shape_color: auto  # null, 'auto', 'manual'
-shift_auto_shape_color: 0
+shift_auto_shape_color: 10
 label_colors: null
 
 shape:
@@ -119,7 +119,7 @@ shortcuts:
   create_point: null
   create_linestrip: null
   edit_polygon: B
-  delete_polygon: Delete
+  delete_polygon: F
   duplicate_polygon: Ctrl+D
   copy_polygon: Ctrl+C
   paste_polygon: Ctrl+V

@@ -509,6 +509,8 @@ class Canvas(QtWidgets.QWidget):
                 ):
                     # Delete point if: left-click + SHIFT on a point
                     self.removeSelectedPoint()
+                # if self.selectedShapes is None:
+
 
                 group_mode = int(ev.modifiers()) == QtCore.Qt.ControlModifier
                 self.selectShapePoint(pos, multiple_selection_mode=group_mode)
@@ -782,7 +784,10 @@ class Canvas(QtWidgets.QWidget):
         deleted_shapes = []
         if self.selectedShapes:
             for shape in self.selectedShapes:
-                self.shapes.remove(shape)
+                try:
+                    self.shapes.remove(shape)
+                except:
+                    return
                 deleted_shapes.append(shape)
             self.storeShapes()
             self.selectedShapes = []
@@ -845,14 +850,14 @@ class Canvas(QtWidgets.QWidget):
             p.drawLine(
                 0,
                 int(self.prevMovePoint.y()),
-                self.width() - 1,
+                2*self.width() - 1,
                 int(self.prevMovePoint.y()),
             )
             p.drawLine(
                 int(self.prevMovePoint.x()),
                 0,
                 int(self.prevMovePoint.x()),
-                self.height() - 1,
+                2*self.height() - 1,
             )
 
         Shape.scale = self.scale
@@ -958,8 +963,13 @@ class Canvas(QtWidgets.QWidget):
         return QtCore.QPointF(x, y)
 
     def outOfPixmap(self, p):
-        w, h = self.pixmap.width(), self.pixmap.height()
-        return not (0 <= p.x() <= w - 1 and 0 <= p.y() <= h - 1)
+        try:
+            w, h = self.pixmap.width(), self.pixmap.height()
+            return not (0 <= p.x() <= w - 1 and 0 <= p.y() <= h - 1)
+        except:
+            return 0
+
+
 
     def finalise(self):
         assert self.current
