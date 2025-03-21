@@ -105,7 +105,8 @@ class Canvas(QtWidgets.QWidget):
         # Set widget options.
         self.setMouseTracking(True)
         self.setFocusPolicy(QtCore.Qt.WheelFocus)
-
+        self.box_selectshapes = None
+        self.selection_rect= None
         self._ai_model = None
 
     def fillDrawing(self):
@@ -341,6 +342,12 @@ class Canvas(QtWidgets.QWidget):
                 self.boundedMoveShapes(self.selectedShapes, pos)
                 self.repaint()
                 self.movingShape = True
+            if self.editing():
+                star_pos = self.prevPoint
+                end_pos = self.transformPos(ev.localPos())
+                self.selection_rect = QtCore.QRectF(star_pos, end_pos).normalized()
+                self.box_selectshapes = True
+                self.repaint()
             return
 
         # Just hovering over the canvas, 2 possibilities:
@@ -543,6 +550,18 @@ class Canvas(QtWidgets.QWidget):
                     self.selectionChanged.emit(
                         [x for x in self.selectedShapes if x != self.hShape]
                     )
+                star_pos = self.prevPoint
+                end_pos = self.transformPos(ev.localPos())
+                selection_rect = QtCore.QRectF(star_pos, end_pos).normalized()
+                for shape in self.shapes:
+                    shape_rect = QtCore.QRectF(shape.points[0], shape.points[1]).normalized()
+                    if selection_rect.intersects(shape_rect) or selection_rect.contains(shape_rect):
+                        self.selectionChanged.emit(self.selectedShapes + [shape])
+                        self.hShape = shape
+                        self.hShapeIsSelected = True
+                self.box_selectshapes = False
+                self.selection_rect = None
+                self.repaint()
 
         if self.movingShape and self.hShape:
             index = self.shapes.index(self.hShape)
@@ -861,6 +880,9 @@ class Canvas(QtWidgets.QWidget):
             )
 
         Shape.scale = self.scale
+        if self.box_selectshapes:
+            p.setPen(QtGui.QPen(QtCore.Qt.white, 2))  # 设置红色边框，线宽 2 像素
+            p.drawRect(self.selection_rect)
         for shape in self.shapes:
             if (shape.selected or not self._hideBackround) and self.isVisible(shape):
                 shape.fill = shape.selected or shape == self.hShape
