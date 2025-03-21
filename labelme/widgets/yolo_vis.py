@@ -253,7 +253,7 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
                             painter.drawRect(x1, y1, x2 - x1, y2 - y1)
 
                             # Draw the label text at the top-left corner of the bounding box
-                            painter.drawText(x1, y1 - 10, str('ship'))
+                            painter.drawText(x1, y1 - 10, str(label))
                         except:
                             self.errorMessage("Error", self.tr("Invalid label '{}'").format(label_path))
                             break
