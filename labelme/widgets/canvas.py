@@ -342,7 +342,7 @@ class Canvas(QtWidgets.QWidget):
                 self.boundedMoveShapes(self.selectedShapes, pos)
                 self.repaint()
                 self.movingShape = True
-            if self.editing():
+            elif self.editing():
                 star_pos = self.prevPoint
                 end_pos = self.transformPos(ev.localPos())
                 self.selection_rect = QtCore.QRectF(star_pos, end_pos).normalized()
