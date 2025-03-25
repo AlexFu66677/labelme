@@ -275,11 +275,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("目标检测"),
             enabled=False,
         )
-        video_object = action(
+        sequence_warping = action(
             self.tr("&标注映射"),
-            self.video_object_detection,
-            shortcuts["video_object"],
-            "video_object",
+            self.sequence_warping,
+            shortcuts["sequence_warping"],
+            "warping",
             self.tr("标注映射"),
             enabled=False,
         )
@@ -767,7 +767,7 @@ class MainWindow(QtWidgets.QMainWindow):
             saveAs=saveAs,
             open=open_,
             rotate=rotate,
-            video_object=video_object,
+            sequence_warping=sequence_warping,
             select_onnx=select_onnx,
             object=object,
             image_pass=image_pass,
@@ -957,6 +957,55 @@ class MainWindow(QtWidgets.QMainWindow):
         Check_Homography_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
         Check_Homography_layout.defaultWidget().layout().addWidget(self.check_Lucas_Kanade)
         Check_Homography_layout.defaultWidget().layout().addWidget(self.check_SIFT)
+        self.check_center = QtWidgets.QCheckBox("中心映射", self)
+        self.check_edge = QtWidgets.QCheckBox("边缘映射", self)
+        self.check_edge.setChecked(True)
+        self.warp_method_group = QtWidgets.QButtonGroup(self)
+        self.warp_method_group.addButton(self.check_center)
+        self.warp_method_group.addButton(self.check_edge)
+        self.warp_method_group.setExclusive(True)  # 互斥模式
+        Check_warp_method_layout = QtWidgets.QWidgetAction(self)
+        Check_warp_method_layout.setDefaultWidget(QtWidgets.QWidget())
+        Check_warp_method_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        Check_warp_method_layout.defaultWidget().layout().addWidget(self.check_center)
+        Check_warp_method_layout.defaultWidget().layout().addWidget(self.check_edge)
+        self.homography_thres = 0.3
+        self.homography_thres_text = QtWidgets.QLineEdit(self)
+        self.homography_thres_text.setPlaceholderText("IOU(0-1)")
+        self.homography_thres_text.setFixedWidth(80)
+        self.homography_thres_button = QtWidgets.QPushButton("设置iou", self)
+        self.keep_current_label = QtWidgets.QCheckBox("保留当前", self)
+        self.keep_current_label.setFixedWidth(80)
+        self.undo_homography_button = QtWidgets.QPushButton("映射撤消", self)
+        homography_thres_layout = QtWidgets.QHBoxLayout()
+        homography_thres_layout.addWidget(self.homography_thres_text)
+        homography_thres_layout.addWidget(self.homography_thres_button)
+
+        homography_undo_layout = QtWidgets.QHBoxLayout()
+        homography_undo_layout.addWidget(self.keep_current_label)
+        homography_undo_layout.addWidget(self.undo_homography_button)
+        # self.undo_homography_button.setFixedWidth(100)
+        # self.homography_thres_button.setFixedWidth(100)
+        homography_thres_action = QtWidgets.QWidgetAction(self)
+        homography_thres_action.setDefaultWidget(QtWidgets.QWidget())
+        homography_thres_action.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        homography_thres_action.defaultWidget().setFixedWidth(180)
+        homography_thres_action.defaultWidget().layout().addLayout(homography_thres_layout)
+        homography_thres_action.defaultWidget().layout().addLayout(homography_undo_layout)
+        self.object_conf_thres = 0.25
+        self.object_conf_thres_text = QtWidgets.QLineEdit(self)
+        self.object_conf_thres_text.setPlaceholderText("Conf(0-1)")
+        self.object_conf_thres_button = QtWidgets.QPushButton("检测阈值", self)
+        object_conf_thres_action = QtWidgets.QWidgetAction(self)
+        object_conf_thres_action.setDefaultWidget(QtWidgets.QWidget())
+        object_conf_thres_action.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        object_conf_thres_action.defaultWidget().setFixedWidth(100)
+        object_conf_thres_action.defaultWidget().layout().addWidget(self.object_conf_thres_text)
+        object_conf_thres_action.defaultWidget().layout().addWidget(self.object_conf_thres_button)
+        self.homography_thres_button.clicked.connect(self.update_homography_threshold)
+        self.object_conf_thres_button.clicked.connect(self.update_object_conf_threshold)
+        self.undo_homography_button.clicked.connect(self.undo_homography)
+        self.pre_homography_shape = []
 
         # 创建一个主widget和布局
         selectAiWidget = QtWidgets.QWidget()
@@ -971,44 +1020,21 @@ class MainWindow(QtWidgets.QMainWindow):
         text2LabelLayout = QtWidgets.QHBoxLayout()
         text2LabelLayout.addWidget(selectAiText2LabelModelLabel)
         text2LabelLayout.addWidget(self._selectAiText2LabelModelComboBox)
-
         # 添加第一个部分到主布局
         selectAiLayout.addLayout(text2LabelLayout)
-
         # 第二个 "SAM" 部分
         selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM:"))
         selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
         self._selectAiModelComboBox = QtWidgets.QComboBox()
-
         # 创建第二个部分的布局
         aiModelLayout = QtWidgets.QHBoxLayout()
         aiModelLayout.addWidget(selectAiModelLabel)
         aiModelLayout.addWidget(self._selectAiModelComboBox)
-
         # 添加第二个部分到主布局
         selectAiLayout.addLayout(aiModelLayout)
-
         # 设置整体布局
         selectAiModel = QtWidgets.QWidgetAction(self)
         selectAiModel.setDefaultWidget(selectAiWidget)
-
-        # selectAiText2LabelModel = QtWidgets.QWidgetAction(self)
-        # selectAiText2LabelModel.setDefaultWidget(QtWidgets.QWidget())
-        # selectAiText2LabelModel.defaultWidget().setLayout(QtWidgets.QHBoxLayout())
-        # selectAiText2LabelModelLabel = QtWidgets.QLabel(self.tr("DINO:"))
-        # selectAiText2LabelModelLabel.setAlignment(QtCore.Qt.AlignCenter)
-        # selectAiText2LabelModel.defaultWidget().layout().addWidget(selectAiText2LabelModelLabel)
-        # self._selectAiText2LabelModelComboBox = QtWidgets.QComboBox()
-        # selectAiText2LabelModel.defaultWidget().layout().addWidget(self._selectAiText2LabelModelComboBox)
-        #
-        # selectAiModel = QtWidgets.QWidgetAction(self)
-        # selectAiModel.setDefaultWidget(QtWidgets.QWidget())
-        # selectAiModel.defaultWidget().setLayout(QtWidgets.QHBoxLayout())
-        # selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM:"))
-        # selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
-        # selectAiModel.defaultWidget().layout().addWidget(selectAiModelLabel)
-        # self._selectAiModelComboBox = QtWidgets.QComboBox()
-        # selectAiModel.defaultWidget().layout().addWidget(self._selectAiModelComboBox)
 
         text2label_model_names = [model.name for model in Text2LabelMODELS]
         self._selectAiText2LabelModelComboBox.addItems(text2label_model_names)
@@ -1029,10 +1055,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Text2Label_Input = QtWidgets.QWidgetAction(self)
         Text2Label_Input.setDefaultWidget(QtWidgets.QWidget())
         Text2Label_Input.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
+        Text2Label_Input.defaultWidget().setFixedWidth(200)
         self.Text2Label_Text = QtWidgets.QLineEdit(self)
-        self.Text2Label_Text.setFixedWidth(200)
         self.Text2Label_detect_button = QtWidgets.QPushButton("TEXT-LABEL", self)
-        self.Text2Label_detect_button.setFixedWidth(200)
         self.Text2Label_Text.setAlignment(QtCore.Qt.AlignCenter)
         Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_Text)
         Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_detect_button)
@@ -1095,17 +1120,20 @@ class MainWindow(QtWidgets.QMainWindow):
             delete,
             undo,
             None,
-            video_object,
-            Check_Homography_layout,
-            None,
             fitWindow,
             zoom,
             None,
-            selectAiModel,
+            sequence_warping,
+            Check_Homography_layout,
+            Check_warp_method_layout,
+            homography_thres_action,
             None,
             Check_AI_config_layout,
+            object_conf_thres_action,
             None,
+            selectAiModel,
             Text2Label_Input,
+            None,
         )
 
         self.statusBar().showMessage(str(self.tr("%s started.")) % __appname__)
@@ -2171,7 +2199,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.rotate.setEnabled(False)
         self.actions.select_onnx.setEnabled(True)
         # self.actions.object.setEnabled(True)
-        self.actions.video_object.setEnabled(True)
+        self.actions.sequence_warping.setEnabled(True)
         # set zoom values
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
@@ -2247,7 +2275,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.undo.setEnabled(True)
             self.actions.select_onnx.setEnabled(True)
             # self.actions.object.setEnabled(True)
-            self.actions.video_object.setEnabled(True)
+            self.actions.sequence_warping.setEnabled(True)
         else:
             self.canvas.setEnabled(False)
             self.actions.save.setEnabled(False)
@@ -2262,7 +2290,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.undo.setEnabled(False)
             self.actions.select_onnx.setEnabled(False)
             self.actions.object.setEnabled(False)
-            self.actions.video_object.setEnabled(False)
+            self.actions.sequence_warping.setEnabled(False)
         if self.labelFile:
             shapes = self.labelFile.shapes
             s = []
@@ -2359,15 +2387,74 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.rotate.setEnabled(False)
         return self.text2label_model
 
-    def video_object_detection(self, _value=False):
+    def update_homography_threshold(self):
+        # Update the homography threshold from the QLineEdit input
+        try:
+            self.homography_thres = float(self.homography_thres_text.text())
+            print(f"Updated Homography Threshold: {self.homography_thres}")
+        except ValueError:
+            print("Invalid input for Homography Threshold")
+
+    def undo_homography(self):
+        try:
+            polygon = []
+            label_file = osp.splitext(self.imagePath)[0] + ".json"
+            if self.pre_homography_shape is not None:
+                current_label = self.pre_homography_shape
+                for box1 in current_label:
+                    polygon.append([box1['label'], box1['points'][0], box1['points'][1]])
+            if self.output_dir:
+                label_file_without_path = osp.basename(label_file)
+                label_file = osp.join(self.output_dir, label_file_without_path)
+            self.pre_homography_shape = []
+            self.save_AI_Labels(label_file, polygon)
+            self.loadFile(self.filename)
+        except ValueError:
+            print("Invalid undo")
+
+    def update_object_conf_threshold(self):
+        # Update the object confidence threshold from the QLineEdit input
+        try:
+            self.object_conf_thres = float(self.object_conf_thres_text.text())
+            print(f"Updated Object Confidence Threshold: {self.object_conf_thres}")
+        except ValueError:
+            print("Invalid input for Object Confidence Threshold")
+
+    def sequence_warping(self, _value=False):
+        def calculate_iou(box1, box2):
+            x1, y1, x2, y2 = box1[0][0], box1[0][1], box1[1][0], box1[1][1]
+            x3, y3, x4, y4 = box2[0][0], box2[0][1], box2[1][0], box2[1][1]
+
+            # 计算交集的坐标
+            x_left = max(x1, x3)
+            y_top = max(y1, y3)
+            x_right = min(x2, x4)
+            y_bottom = min(y2, y4)
+
+            # 计算交集面积
+            if x_right > x_left and y_bottom > y_top:
+                intersection_area = (x_right - x_left) * (y_bottom - y_top)
+            else:
+                intersection_area = 0
+
+            # 计算两个框的面积
+            box1_area = (x2 - x1) * (y2 - y1)
+            box2_area = (x4 - x3) * (y4 - y3)
+
+            # 计算 IoU
+            iou = intersection_area / (box1_area + box2_area - intersection_area) if (
+                                                                                             box1_area + box2_area - intersection_area) > 0 else 0
+            return iou
 
         index = self.imageList.index(self.filename)
         if index == 0:
             return 0
         else:
             pre_image_name = self.imageList[index - 1]
-            pre_image = cv2.imread(pre_image_name, cv2.IMREAD_GRAYSCALE)
-            cur_image = cv2.imread(self.filename, cv2.IMREAD_GRAYSCALE)
+            pre_image = cv2.imdecode(np.fromfile(pre_image_name, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            cur_image = cv2.imdecode(np.fromfile(self.filename, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            # pre_image = cv2.imread(pre_image_name, cv2.IMREAD_GRAYSCALE)
+            # cur_image = cv2.imread(self.filename, cv2.IMREAD_GRAYSCALE)
             image_height, image_width = cur_image.shape[:2]
             if self.check_Lucas_Kanade.isChecked():
                 feature_params = dict(maxCorners=500, qualityLevel=0.1, minDistance=10, blockSize=10)
@@ -2409,16 +2496,23 @@ class MainWindow(QtWidgets.QMainWindow):
             for shape in data['shapes']:
                 src_point0 = np.array([[shape['points'][0][0], shape['points'][0][1]]], dtype=np.float32)
                 src_point1 = np.array([[shape['points'][1][0], shape['points'][1][1]]], dtype=np.float32)
-                points0 = cv2.perspectiveTransform(src_point0.reshape(-1, 1, 2), H).tolist()
-                points1 = cv2.perspectiveTransform(src_point1.reshape(-1, 1, 2), H).tolist()
                 class_id = shape['label']
-                points0 = [int(points0[0][0][0]), int(points0[0][0][1])]
-                points1 = [int(points1[0][0][0]), int(points1[0][0][1])]
-                # points0[0] = max(0, min(points0[0], image_width - 1))
-                # points0[1] = max(0, min(points0[1], image_height - 1))
-                # points1[0] = max(0, min(points1[0], image_width - 1))
-                # points1[1] = max(0, min(points1[1], image_height - 1))
-                if 0 <= points0[0] < image_width and 0 <= points0[1] < image_height and 0 <= points1[0] < image_width and 0 <= points1[1] < image_height:
+                if self.check_center.isChecked():
+                    center_x = (shape['points'][0][0] + shape['points'][1][0]) / 2
+                    center_y = (shape['points'][0][1] + shape['points'][1][1]) / 2
+                    label_w = shape['points'][1][0] - shape['points'][0][0]
+                    label_h = shape['points'][1][1] - shape['points'][0][1]
+                    src_center = np.array([[center_x, center_y]], dtype=np.float32)
+                    center = cv2.perspectiveTransform(src_center.reshape(-1, 1, 2), H).tolist()
+                    points0 = [int(center[0][0][0] - (label_w / 2)), int(center[0][0][1]) - (label_h / 2)]
+                    points1 = [int(center[0][0][0] + (label_w / 2)), int(center[0][0][1]) + (label_h / 2)]
+                if self.check_edge.isChecked():
+                    points0 = cv2.perspectiveTransform(src_point0.reshape(-1, 1, 2), H).tolist()
+                    points1 = cv2.perspectiveTransform(src_point1.reshape(-1, 1, 2), H).tolist()
+                    points0 = [int(points0[0][0][0]), int(points0[0][0][1])]
+                    points1 = [int(points1[0][0][0]), int(points1[0][0][1])]
+                if 0 <= points0[0] < image_width and 0 <= points0[1] < image_height and 0 <= points1[
+                    0] < image_width and 0 <= points1[1] < image_height:
                     # 确保坐标在图像范围内
                     points0[0] = max(0, min(points0[0], image_width - 1))
                     points0[1] = max(0, min(points0[1], image_height - 1))
@@ -2427,9 +2521,19 @@ class MainWindow(QtWidgets.QMainWindow):
                     polygon.append([class_id, points0, points1])
                 # polygon.append([class_id, points0, points1])
             label_file = osp.splitext(self.imagePath)[0] + ".json"
+            if self.keep_current_label.isChecked():
+                if self.labelFile.shapes is not None:
+                    current_label = self.labelFile.shapes
+                    polygon1 = polygon.copy()
+                    for box1 in current_label:
+                        ious = [calculate_iou([box1['points'][0], box1['points'][1]], [box2[1], box2[2]]) for box2 in
+                                polygon1]
+                        if all(iou < self.homography_thres for iou in ious):
+                            polygon.append([box1['label'], box1['points'][0], box1['points'][1]])
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = osp.join(self.output_dir, label_file_without_path)
+            self.pre_homography_shape = self.labelFile.shapes
             self.save_AI_Labels(label_file, polygon)
             self.loadFile(self.filename)
 
@@ -2590,7 +2694,6 @@ class MainWindow(QtWidgets.QMainWindow):
                         "type": input_tensor.type,
                         "shape": input_tensor.shape,
                     }
-
                 img = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
                 image_height, image_width = img.shape[:2]
                 img, ratio = resize_with_padding(img, (input_info["shape"][2], input_info["shape"][3]))
@@ -2606,7 +2709,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     pred_class = pred[..., 4:]
                     pred_conf = np.max(pred_class, axis=-1)
                     pred = np.insert(pred, 4, pred_conf, axis=-1)
-                    result = nms(pred, 0.4, 0.45)
+                    result = nms(pred, self.object_conf_thres, 0.45)
 
                     for detection in result:
                         x_center, y_center, w, h, score, class_id = detection
@@ -2633,7 +2736,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif task == "obb":
                     polygon = []
                     pred = np.transpose(pred, (0, 2, 1))
-                    conf_thres = 0.25
+                    conf_thres = self.object_conf_thres
                     iou_thres = 0.45
                     boxes = []
                     for item in pred[0]:
@@ -2688,7 +2791,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if task == "obb":
                 polygon = []
                 pred = np.transpose(pred, (0, 2, 1))
-                conf_thres = 0.25
+                conf_thres = self.object_conf_thres
                 iou_thres = 0.45
                 boxes = []
                 for item in pred[0]:
@@ -2721,15 +2824,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             circular_region = cv2.bitwise_and(img_r, mask)
                             # 灰度转换和边缘检测
                             gray = cv2.cvtColor(circular_region, cv2.COLOR_BGR2GRAY)
-                            # edges = cv2.Canny(gray, 50, 150, apertureSize=5)
-                            # output_filename = f"output_with_edge_{i}.png"
-                            # cv2.imwrite(output_filename, gray)
-                            # 直线检测
-                            # lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180, threshold=30,
-                            #                         minLineLength=5, maxLineGap=5)
                             lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_STD)
                             lines = lsd.detect(gray)[0]  # 输入灰度图像
-
                             # 筛选与长或宽最接近的直线
                             best_line = None
                             min_diff = float('inf')
@@ -2749,14 +2845,6 @@ class MainWindow(QtWidgets.QMainWindow):
                                         min_diff = diff
                                         best_line = (x1, y1, x2, y2)
                                 if best_line is not None:
-                                    # x1, y1, x2, y2 = best_line
-                                    # cv2.line(img_r, (x1, y1), (x2, y2), (0, 255, 255), 2)  # 绿色线，粗细2
-                                    # sym_x1, sym_y1 = 2 * cx - x1, 2 * cy - y1
-                                    # sym_x2, sym_y2 = 2 * cx - x2, 2 * cy - y2
-                                    # # 所有点的列表
-                                    # points = [np.array((x1, y1)), np.array((x2, y2)), np.array((sym_x1, sym_y1)),
-                                    #           np.array((sym_x2, sym_y2))]
-                                    # xyxy_boxes.append(points)
                                     x1, y1, x2, y2 = best_line
                                     cv2.line(img_r, (x1, y1), (x2, y2), (0, 255, 255), 2)  # 绿色线，粗细2
                                     dx, dy = x2 - x1, y2 - y1
@@ -2766,9 +2854,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     D = B ** 2 - 4 * A * C
                                     t1 = (-B + np.sqrt(D)) / (2 * A)
                                     t2 = (-B - np.sqrt(D)) / (2 * A)
-
                                     x1, y1, x2, y2 = x1 + t1 * dx, y1 + t1 * dy, x1 + t2 * dx, y1 + t2 * dy
-
                                     sym_x1, sym_y1 = 2 * cx - x1, 2 * cy - y1
                                     sym_x2, sym_y2 = 2 * cx - x2, 2 * cy - y2
                                     points = [np.array((x1, y1)), np.array((x2, y2)), np.array((sym_x1, sym_y1)),
@@ -2823,7 +2909,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 pred_class = pred[..., 4:]
                 pred_conf = np.max(pred_class, axis=-1)
                 pred = np.insert(pred, 4, pred_conf, axis=-1)
-                result = nms(pred, 0.25, 0.45)
+                result = nms(pred, self.object_conf_thres, 0.45)
                 for detection in result:
                     x_center, y_center, w, h, score, class_id = detection
                     detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),

@@ -6,7 +6,7 @@ keep_prev_scale: false
 keep_prev_brightness: false
 keep_prev_contrast: false
 logger_level: info
-device: cuda
+device: cpu
 
 flags: null
 label_flags: null
@@ -72,7 +72,6 @@ canvas:
   double_click: close
   # The max number of edits we can undo
   num_backups: 10
-  # show crosshair
   crosshair:
     polygon: false
     rectangle: true
@@ -85,54 +84,96 @@ canvas:
     ai_mask: false
 
 shortcuts:
+  #关闭
   close: Ctrl+Shift+W
+  #打开
   open: Ctrl+O
+  #打开文件夹
   open_dir: Ctrl+U
+  #退出
   quit: Ctrl+Q
+  #保存
   save: Ctrl+S
+  #保存名称选择
   save_as: Ctrl+Shift+S
+  #保存地址选择
   save_to: null
+  #json文件删除
   delete_file: Ctrl+Delete
+  #onnx模型选择
   select_onnx: null
+  #目标检测
   object: [W, Ctrl+W]
-  video_object: null
-  rotate: null
+  #标注映射
+  sequence_warping: null #标注映射
+  #旋转
+  rotate: null #旋转
+  #数据集生成
   dataset: null
+  #YOLO标注类型可视化
   yolo: null
+  #审核通过
   image_pass: null
+  #审核不通过
   image_unpass: null
-
+  #下一张
   open_next: [D, Ctrl+Shift+D]
+  #上一张
   open_prev: [A, Ctrl+Shift+A]
-
+  #放大
   zoom_in: [Ctrl++, Ctrl+=]
+  #缩小
   zoom_out: Ctrl+-
+  #原始大小
   zoom_to_original: Ctrl+0
+  #适应窗口大小
   fit_window: Ctrl+F
+  #适应宽度
   fit_width: Ctrl+Shift+F
-
+  #创建旋转框
   create_rotate: null
+  #创建多边形框
   create_polygon: Ctrl+N
+  #创建矩形框
   create_rectangle: Ctrl+R
+  #创建圆形
   create_circle: null
+  #创建线
   create_line: null
+  #创建点
   create_point: null
+  #创建多段线
   create_linestrip: null
+  #编辑模式
   edit_polygon: B
+  #删除多边形
   delete_polygon: F
+  #拷贝多边形(本张图象直接生成复制框)
   duplicate_polygon: Ctrl+D
+  #复制多边形
   copy_polygon: Ctrl+C
+  #粘贴多边形
   paste_polygon: Ctrl+V
+  #撤销
   undo: Ctrl+Z
+  #撤销最后控制点
   undo_last_point: Ctrl+Z
-  add_point_to_edge: Ctrl+Shift+P
+  #编辑标签
   edit_label: Ctrl+E
+
+  add_point_to_edge: Ctrl+Shift+P
   toggle_keep_prev_mode: Ctrl+P
   remove_selected_point: [Meta+H, Backspace]
 
+  #显示所有多边形
   show_all_polygons: null
+  #隐藏所有多边形
   hide_all_polygons: null
+  #多边形显示/隐藏切换
   toggle_all_polygons: T
+  #文字提示检测
   Text2Label: null
+  #视频切分图像
   video_slice: null
+  #数据增强
   data_augmentation: null
