@@ -1,8 +1,10 @@
-from qtpy import QtWidgets
+from qtpy import QtWidgets, QtCore
 from .. import dataset
 from sahi.scripts.slice_coco import slice
 import cv2
 from pathlib import Path
+import numpy as np
+
 
 class Slice_dataset(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -15,7 +17,7 @@ class Slice_dataset(QtWidgets.QDialog):
         self.value_inputs = []
         layout = QtWidgets.QVBoxLayout()
 
-        type_label = QtWidgets.QLabel("Type:")
+        type_label = QtWidgets.QLabel("数据类型:")
         self.type_combobox = QtWidgets.QComboBox()
         self.type_combobox.addItem("coco")
         self.type_combobox.addItem("yolo")
@@ -49,9 +51,10 @@ class Slice_dataset(QtWidgets.QDialog):
             layout.addWidget(folder_label)
             layout.addLayout(folder_layout)
         # # 添加数值输入控件
-        value_names = ["slice_size", "overlap_ratio"]
+        # 添加数值输入控件
+        value_names = ["图像大小", "重叠比例","边缘保留阈值"]
         value_layout = QtWidgets.QHBoxLayout()
-        for i in range(2):
+        for i in range(3):
             value_label = QtWidgets.QLabel(f"{value_names[i]}:")
             value_input = QtWidgets.QLineEdit()
 
@@ -61,10 +64,24 @@ class Slice_dataset(QtWidgets.QDialog):
             value_sub_layout = QtWidgets.QVBoxLayout()
             value_sub_layout.addWidget(value_label)
             value_sub_layout.addWidget(value_input)
-
             value_layout.addLayout(value_sub_layout)
 
         layout.addLayout(value_layout)
+
+        # value_checkbox = QtWidgets.QCheckBox("保留切分部分")  # 新增：QCheckBox 实例
+        # value_checkbox.setChecked(True)  # 默认选中
+        # self.value_checkboxes.append(value_checkbox)  # 新增：存储 QCheckBox 实例
+        # layout.addWidget(value_checkbox)  # 新增：将 QCheckBox 添加到布局中
+        # 添加进度条
+        progress_layout = QtWidgets.QHBoxLayout()  # 横向布局
+        self.progress_label = QtWidgets.QLabel("Progress:")
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setAlignment(QtCore.Qt.AlignCenter)
+        progress_layout.addWidget(self.progress_label)
+        progress_layout.addWidget(self.progress_bar)
+        layout.addLayout(progress_layout)
 
         self.result_label = QtWidgets.QLabel("Result:")
         self.result_text_edit = QtWidgets.QTextEdit()
@@ -84,6 +101,8 @@ class Slice_dataset(QtWidgets.QDialog):
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             self.folder_inputs[index].setText(folder)
+        else:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No folder selected.")
 
     def select_json_file(self):
         file_dialog = QtWidgets.QFileDialog()
@@ -92,6 +111,8 @@ class Slice_dataset(QtWidgets.QDialog):
         if file_dialog.exec_():
             file_path = file_dialog.selectedFiles()
             self.json_input.setText(file_path[0])
+        else:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No file selected.")
 
     def update_json_button_connection(self):
         try:
@@ -107,6 +128,8 @@ class Slice_dataset(QtWidgets.QDialog):
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             self.json_input.setText(folder)
+        else:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No folder selected.")
 
     def yolo_slice(self, image_dir, label_dir, slice_size, overlap_ratio, out_dir):
         image_dir = Path(image_dir)
@@ -117,7 +140,7 @@ class Slice_dataset(QtWidgets.QDialog):
             out_dir.mkdir(parents=True)
 
         def process_file(image_file, label_file):
-            image = cv2.imread(str(image_file))
+            image = cv2.imdecode(np.fromfile(str(image_file), dtype=np.uint8), cv2.IMREAD_COLOR)
             height, width, _ = image.shape
 
             slice_height = min(slice_size, height)
@@ -145,9 +168,18 @@ class Slice_dataset(QtWidgets.QDialog):
                     img_slice = image[y:end_y, x:end_x]
                     slice_filename = f"{image_file.stem}_{x}_{y}.jpg"
                     slice_path = out_dir / slice_filename
-                    cv2.imwrite(str(slice_path), img_slice)
+                    # cv2.imwrite(str(slice_path), img_slice)
+                    slice_path = Path(str(slice_path))
+                    _, image_data = cv2.imencode('.jpg', img_slice)
+                    with open(slice_path, 'wb') as f:
+                        f.write(image_data.tobytes())
 
                     label_slice = []
+                    if self.value_inputs[2].text() is not None:
+                        keep_ratio = float(self.value_inputs[2].text())
+                    else:
+                        keep_ratio = 1
+
                     for label in labels:
                         parts = label.strip().split()
                         class_id = int(float(parts[0]))
@@ -177,16 +209,30 @@ class Slice_dataset(QtWidgets.QDialog):
                         # Check if there is an intersection
                         if x_min_slice < x_max_slice and y_min_slice < y_max_slice:
                             # Calculate clipped bounding box dimensions
-                            clipped_width = x_max_slice - x_min_slice
-                            clipped_height = y_max_slice - y_min_slice
-                            clipped_x_center = (x_min_slice + clipped_width / 2 - x) / (end_x - x)
-                            clipped_y_center = (y_min_slice + clipped_height / 2 - y) / (end_y - y)
-                            clipped_bbox_width = clipped_width / (end_x - x)
-                            clipped_bbox_height = clipped_height / (end_y - y)
+                            original_area = (x_max_abs - x_min_abs) * (y_max_abs - y_min_abs)
+                            intersection_area = (x_max_slice - x_min_slice) * (y_max_slice - y_min_slice)
+                            area_ratio = intersection_area / original_area if original_area > 0 else 0
+                            if area_ratio >= keep_ratio:  # 新增阈值判断
+                                # 原有坐标转换逻辑
+                                clipped_width = x_max_slice - x_min_slice
+                                clipped_height = y_max_slice - y_min_slice
+                                clipped_x_center = (x_min_slice + clipped_width / 2 - x) / (end_x - x)
+                                clipped_y_center = (y_min_slice + clipped_height / 2 - y) / (end_y - y)
+                                clipped_bbox_width = clipped_width / (end_x - x)
+                                clipped_bbox_height = clipped_height / (end_y - y)
 
-                            # Add the adjusted label to the slice
-                            label_slice.append(
-                                f"{class_id} {clipped_x_center} {clipped_y_center} {clipped_bbox_width} {clipped_bbox_height}")
+                                label_slice.append(
+                                    f"{class_id} {clipped_x_center} {clipped_y_center} {clipped_bbox_width} {clipped_bbox_height}")
+                            # clipped_width = x_max_slice - x_min_slice
+                            # clipped_height = y_max_slice - y_min_slice
+                            # clipped_x_center = (x_min_slice + clipped_width / 2 - x) / (end_x - x)
+                            # clipped_y_center = (y_min_slice + clipped_height / 2 - y) / (end_y - y)
+                            # clipped_bbox_width = clipped_width / (end_x - x)
+                            # clipped_bbox_height = clipped_height / (end_y - y)
+                            #
+                            # # Add the adjusted label to the slice
+                            # label_slice.append(
+                            #     f"{class_id} {clipped_x_center} {clipped_y_center} {clipped_bbox_width} {clipped_bbox_height}")
 
                     if label_slice:
                         label_filename = f"{image_file.stem}_{x}_{y}.txt"
@@ -197,23 +243,42 @@ class Slice_dataset(QtWidgets.QDialog):
         # Define the image formats you want to support
         image_formats = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.gif"]
 
+        image_files = []
         for fmt in image_formats:
-            for image_file in image_dir.glob(fmt):
-                label_file = label_dir / f"{image_file.stem}.txt"
-                if label_file.exists():
-                    process_file(image_file, label_file)
+            image_files.extend(image_dir.glob(fmt))
+
+        total_files = len(image_files)
+        for i, image_file in enumerate(image_files):
+            label_file = label_dir / f"{image_file.stem}.txt"
+            if label_file.exists():
+                process_file(image_file, label_file)
+            # 更新进度条
+            self.progress_bar.setValue((i + 1) * 100 // total_files)
+
         return "Done"
+
     def slice(self):
         type_data = self.type_combobox.currentText()
 
         folder_data = [folder_input.text() for folder_input in self.folder_inputs]
         value_data = [value_input.text() for value_input in self.value_inputs]
-        if type_data == 'coco':
-            result = slice(folder_data[0], self.json_input.text(), int(value_data[0]), float(value_data[1]), True,
-                           folder_data[1])
-            self.result_text_edit.setText(result)
-        if type_data == 'yolo':
-            result = self.yolo_slice(folder_data[0], self.json_input.text(), int(value_data[0]), float(value_data[1]),
-                           folder_data[1])
-            self.result_text_edit.setText(result)
 
+        if not all(folder_data) or not self.json_input.text() or not all(value_data):
+            QtWidgets.QMessageBox.warning(self, "Warning", "Please fill in all fields.")
+            return
+
+        if type_data == 'coco':
+            try:
+                result = slice(folder_data[0], self.json_input.text(), int(value_data[0]), float(value_data[1]), True,
+                               folder_data[1])
+                self.result_text_edit.setText(result)
+            except Exception as e:
+                self.result_text_edit.setText(f"An error occurred: {str(e)}")
+        elif type_data == 'yolo':
+            try:
+                result = self.yolo_slice(folder_data[0], self.json_input.text(), int(value_data[0]),
+                                         float(value_data[1]),
+                                         folder_data[1])
+                self.result_text_edit.setText(result)
+            except Exception as e:
+                self.result_text_edit.setText(f"An error occurred: {str(e)}")
