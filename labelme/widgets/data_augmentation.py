@@ -8,7 +8,7 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Data_Augmentation")
-        self.resize(400, 500)  # 调整窗口宽度
+        # self.resize(400, 500)  # 调整窗口宽度
         self.folder_labels = []
         self.folder_inputs = []
         layout = QtWidgets.QVBoxLayout()
@@ -120,6 +120,23 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         grayscale_layout.addWidget(self.grayscale_checkbox)
         self.augmentation_layout.addLayout(grayscale_layout)
 
+        # 添加padding控件
+        self.padding_checkbox = QtWidgets.QCheckBox("Padding")
+        self.padding_checkbox.stateChanged.connect(self.update_name)
+        self.padding_width_input = QtWidgets.QSpinBox()
+        self.padding_width_input.setRange(1, 10000)
+        self.padding_width_input.setValue(640)
+        self.padding_height_input = QtWidgets.QSpinBox()
+        self.padding_height_input.setRange(1, 10000)
+        self.padding_height_input.setValue(480)
+        padding_layout = QtWidgets.QHBoxLayout()
+        padding_layout.addWidget(self.padding_checkbox)
+        padding_layout.addWidget(QtWidgets.QLabel("Width:"))
+        padding_layout.addWidget(self.padding_width_input)
+        padding_layout.addWidget(QtWidgets.QLabel("Height:"))
+        padding_layout.addWidget(self.padding_height_input)
+        self.augmentation_layout.addLayout(padding_layout)
+
         layout.addLayout(self.augmentation_layout)
 
         # 添加图像名称显示框
@@ -160,6 +177,9 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
     def update_name(self):
         # 初始化名称
         name = "XXXX"
+
+        if self.padding_checkbox.isChecked():
+            name += "_p"  # padding
 
         if self.rotation_checkbox.isChecked():
             name += "_r"  # 旋转
@@ -216,6 +236,11 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
             filename = os.path.basename(image_path)
             txt_path = os.path.splitext(image_path)[0] + ".txt"  # 对应的YOLO标注
             yolo_data = self.load_yolo_labels(txt_path)
+
+            if self.padding_checkbox.isChecked():
+                padding_width = self.padding_width_input.value()
+                padding_height = self.padding_height_input.value()
+                img, yolo_data = self.apply_padding(img, yolo_data, padding_width, padding_height)
 
             if self.rotation_checkbox.isChecked():
                 img, yolo_data = self.apply_rotation(img, yolo_data)
@@ -378,6 +403,45 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         is_success, im_buf_arr = cv2.imencode(".jpg", img, encode_param)
         img = cv2.imdecode(im_buf_arr, cv2.IMREAD_COLOR)
         return img
+
+    def apply_padding(self, img, yolo_data, padding_width, padding_height):
+        """应用padding效果"""
+        h, w = img.shape[:2]
+        # 如果图像长宽超过padding_width或padding_height，则直接返回原图像和标注
+        if w > padding_width or h > padding_height:
+            return img, yolo_data
+
+        new_img = np.zeros((padding_height, padding_width, 3), dtype=np.uint8)
+        x_offset = (padding_width - w) // 2
+        y_offset = (padding_height - h) // 2
+        new_img[y_offset:y_offset+h, x_offset:x_offset+w] = img
+
+        # 调整YOLO标注
+        type_data = self.type_combobox.currentText()
+        if type_data == 'YOLO_HBB':
+            padded_labels = []
+            for label in yolo_data:
+                box_x, box_y, box_w, box_h = label[1:]
+                new_x = (box_x * w + x_offset) / padding_width
+                new_y = (box_y * h + y_offset) / padding_height
+                new_w = box_w * w / padding_width
+                new_h = box_h * h / padding_height
+                padded_labels.append([label[0], new_x, new_y, new_w, new_h])
+            return new_img, padded_labels
+        if type_data == 'YOLO_OBB':
+            padded_labels = []
+            for label in yolo_data:
+                x1, y1, x2, y2, x3, y3, x4, y4 = label[1:]
+                new_x1 = (x1 * w + x_offset) / padding_width
+                new_y1 = (y1 * h + y_offset) / padding_height
+                new_x2 = (x2 * w + x_offset) / padding_width
+                new_y2 = (y2 * h + y_offset) / padding_height
+                new_x3 = (x3 * w + x_offset) / padding_width
+                new_y3 = (y3 * h + y_offset) / padding_height
+                new_x4 = (x4 * w + x_offset) / padding_width
+                new_y4 = (y4 * h + y_offset) / padding_height
+                padded_labels.append([label[0], new_x1, new_y1, new_x2, new_y2, new_x3, new_y3, new_x4, new_y4])
+            return new_img, padded_labels
 
     def get_images_from_folder(self, folder):
         """从文件夹中获取所有图像路径"""
