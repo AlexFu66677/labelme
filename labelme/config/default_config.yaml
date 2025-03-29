@@ -177,3 +177,5 @@ shortcuts:
   video_slice: null
   #数据增强
   data_augmentation: null
+  #数据增强
+  copy_paste_augmentation: null

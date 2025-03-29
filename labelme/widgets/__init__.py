@@ -28,3 +28,4 @@ from .concat_dataset_dialog import Concat_dataset
 from .yolo_vis import Yolo_Vis_Dialog
 from .video_slice import Video_slice_Dialog
 from .data_augmentation import Data_augmentation_Dialog
+from .copy_paste_augmentation import copy_paste_augmentation_Dialog
