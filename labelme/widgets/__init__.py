@@ -20,7 +20,7 @@ from .unique_label_qlist_widget import UniqueLabelQListWidget
 
 from .zoom_widget import ZoomWidget
 
-from .dataset_dialog import DatasetDialog
+from .dataset_dialog import Create_dataset_Dialog
 from .QC_widget import QCWidget
 from .select_onnx_dialog import Selectonnx
 from .slice_dataset_dialog import Slice_dataset
@@ -29,3 +29,4 @@ from .yolo_vis import Yolo_Vis_Dialog
 from .video_slice import Video_slice_Dialog
 from .data_augmentation import Data_augmentation_Dialog
 from .copy_paste_augmentation import copy_paste_augmentation_Dialog
+from .dataset_analysis import Dataset_analysis_Dialog

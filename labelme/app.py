@@ -21,7 +21,7 @@ from labelme.widgets import QCWidget
 from labelme.widgets import Selectonnx
 from labelme.widgets import Slice_dataset
 from labelme.widgets import Concat_dataset
-from labelme.widgets import DatasetDialog
+from labelme.widgets import Create_dataset_Dialog
 from labelme.widgets import Yolo_Vis_Dialog
 from labelme.widgets import Video_slice_Dialog
 from labelme.widgets import Data_augmentation_Dialog
@@ -52,6 +52,7 @@ from labelme.widgets import LabelListWidgetItem
 from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
+from labelme.widgets import Dataset_analysis_Dialog
 from labelme.ai import obb_nms,xywhr2xyxyxyxy,resize_with_padding,calculate_iou
 from labelme.ai import SIFT_Homography,optical_flow_Homography
 from labelme.ai import preprocess,detect_postprocess,obb_detect_postprocess,obb_detect_postprocess_adjust, obb_detect_preprocess_adjust
@@ -303,12 +304,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("复核不通过"),
             enabled=False,
         )
-        dataset = action(
+        create_dataset = action(
             self.tr("&数据集生成"),
-            self.Dataset,
-            shortcuts["dataset"],
-            "dataset",
+            self.create_dataset,
+            shortcuts["create_dataset"],
+            "create_dataset",
             self.tr("数据集生成"),
+        )
+        dataset_analysis = action(
+            self.tr("&数据集分析"),
+            self.dataset_analysis,
+            shortcuts["dataset_analysis"],
+            "dataset_analysis",
+            self.tr("数据集分析"),
         )
         yolovis = action(
             self.tr("&yolo可视化"),
@@ -341,14 +349,14 @@ class MainWindow(QtWidgets.QMainWindow):
         slice_dataset = action(
             self.tr("&数据集分割"),
             self.Slice_Dataset,
-            shortcuts["dataset"],
+            shortcuts["create_dataset"],
             "slice",
             self.tr("数据分割"),
         )
         concat_dataset = action(
             self.tr("&数据集合并"),
             self.Concat_Dataset,
-            shortcuts["dataset"],
+            shortcuts["create_dataset"],
             "concat",
             self.tr("数据合并"),
         )
@@ -784,7 +792,8 @@ class MainWindow(QtWidgets.QMainWindow):
             image_pass=image_pass,
             image_unpass=image_unpass,
             QCResult=QCResult,
-            dataset=dataset,
+            create_dataset=create_dataset,
+            dataset_analysis= dataset_analysis,
             slice_dataset=slice_dataset,
             data_augmentation=data_augmentation,
             copy_paste_augmentation = copy_paste_augmentation,
@@ -1107,7 +1116,8 @@ class MainWindow(QtWidgets.QMainWindow):
             zoom,
             zoomIn,
             zoomOut,
-            dataset,
+            create_dataset,
+            dataset_analysis,
             slice_dataset,
             concat_dataset,
             yolovis,
@@ -2554,8 +2564,11 @@ class MainWindow(QtWidgets.QMainWindow):
         label_file = osp.splitext(self.filename)[0] + ".json"
         self.saveLabels(label_file, False)
 
-    def Dataset(self, _value=False):
-        dialog = DatasetDialog()
+    def create_dataset(self, _value=False):
+        dialog = Create_dataset_Dialog()
+        dialog.exec_()
+    def dataset_analysis(self, _value=False):
+        dialog = Dataset_analysis_Dialog()
         dialog.exec_()
 
     def Yolovis(self, _value=False):

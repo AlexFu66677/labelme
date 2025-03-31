@@ -109,7 +109,9 @@ shortcuts:
   #旋转
   rotate: null #旋转
   #数据集生成
-  dataset: null
+  create_dataset: null
+  #数据集分析
+  dataset_analysis : null
   #YOLO标注类型可视化
   yolo: null
   #审核通过

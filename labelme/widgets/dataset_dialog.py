@@ -3,7 +3,7 @@ from qtpy import QtWidgets
 from .. import dataset
 
 
-class DatasetDialog(QtWidgets.QDialog):
+class Create_dataset_Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Dataset")
