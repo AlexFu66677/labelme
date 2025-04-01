@@ -280,7 +280,7 @@
     <message>
         <location filename="../app.py" line="410"/>
         <source>Duplicate Polygons</source>
-        <translation>复制多边形</translation>
+        <translation>拷贝多边形</translation>
     </message>
     <message>
         <location filename="../app.py" line="410"/>

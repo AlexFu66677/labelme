@@ -364,7 +364,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("Open Dir"),
             self.openDirDialog,
             shortcuts["open_dir"],
-            "open",
+            "opendir",
             self.tr("Open Dir"),
         )
         openNextImg = action(
@@ -570,7 +570,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("Copy Polygons"),
             self.copySelectedShape,
             shortcuts["copy_polygon"],
-            "copy_clipboard",
+            "copy",
             self.tr("Copy selected polygons to clipboard"),
             enabled=False,
         )
@@ -578,7 +578,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("Paste Polygons"),
             self.pasteSelectedShape,
             shortcuts["paste_polygon"],
-            "paste",
+            "copy",
             self.tr("Paste copied polygons"),
             enabled=False,
         )
@@ -1113,7 +1113,6 @@ class MainWindow(QtWidgets.QMainWindow):
             rotate,
             # video_object,
             fitWindow,
-            zoom,
             zoomIn,
             zoomOut,
             create_dataset,
@@ -1143,6 +1142,8 @@ class MainWindow(QtWidgets.QMainWindow):
             duplicate,
             delete,
             undo,
+            None,
+            zoom,
             None,
             sequence_warping,
             Check_Homography_layout,
