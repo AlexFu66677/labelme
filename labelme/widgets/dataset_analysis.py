@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import seaborn as sns
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 
 class Dataset_analysis_Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -84,7 +85,7 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
         # 顶部概览表
         self.summary_table = self._create_table(
             5, 2,
-            ["Item","Value"],
+            ["Item", "Value"],
             None
         )
         for row, text in enumerate(["Total Images", "Total Classes", "Total Annotations", "Max Area", "Min Area"]):
@@ -99,7 +100,7 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
         # 底部详细分析表
         self.detail_table = self._create_table(
             0, 8,  # 增加三列
-            ["Class", "Small", "S(%)","Medium","M(%)", "Large","L(%)", "Total"],  # 增加百分比列
+            ["Class", "Small", "S(%)", "Medium", "M(%)", "Large", "L(%)", "Total"],  # 增加百分比列
             None
         )
 
@@ -221,6 +222,7 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
         main_layout.addLayout(ctrl_layout)
         main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(main_splitter)
+
     def _setup_connections(self):
         """连接信号与槽"""
         self.load_btn.clicked.connect(self.load_dataset)
@@ -269,17 +271,18 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
             all_files = os.listdir(dataset_dir)
             image_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             label_files = [f for f in all_files if f.endswith('.txt')]
-
+            if len(label_files) == 0:
+                label_files = [f for f in all_files if f.endswith('.json')]
             self.global_stats["total_images"] = len(image_files)
             image_basenames = {os.path.splitext(f)[0] for f in image_files}
-
             self.progress_bar.setRange(0, len(label_files))
             self.progress_bar.show()
 
             # 使用线程池处理每个标签文件
             with ThreadPoolExecutor() as executor:
                 futures = {
-                    executor.submit(self.process_label_file, dataset_dir,image_files, label_file, image_basenames): label_file for
+                    executor.submit(self.process_label_file, dataset_dir, image_files, label_file,
+                                    image_basenames): label_file for
                     label_file in label_files}
                 for future in as_completed(futures):
                     idx = list(futures.values()).index(futures[future])
@@ -302,7 +305,7 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
         finally:
             self.progress_bar.hide()
 
-    def process_label_file(self, dataset_dir,image_files, label_file, image_basenames):
+    def process_label_file(self, dataset_dir, image_files, label_file, image_basenames):
         base_name = os.path.splitext(label_file)[0]
         if base_name not in image_basenames:
             return
@@ -311,33 +314,78 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
         img = plt.imread(image_path)
         img_height, img_width = img.shape[:2]
         label_path = os.path.join(dataset_dir, label_file)
-        with open(label_path, 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) < 5:
-                    continue
+        if label_file.endswith('.txt'):
+            with open(label_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) < 5:
+                        continue
 
-                # 解析标注数据
-                class_id = int(parts[0])
-                x_center, y_center, width, height = map(float, parts[1:5])
+                    # 解析标注数据
+                    class_id = int(parts[0])
+                    x_center, y_center, width, height = map(float, parts[1:5])
 
-                # 转换为绝对尺寸
-                abs_width = width * img_width
-                abs_height = height * img_height
-                pixel_area = abs_width * abs_height
+                    # 转换为绝对尺寸
+                    abs_width = width * img_width
+                    abs_height = height * img_height
+                    pixel_area = abs_width * abs_height
+
+                    # 更新全局统计
+                    self.global_stats["total_annotations"] += 1
+                    self.global_stats["class_distribution"][class_id] += 1
+                    self.global_stats["max_area"] = max(self.global_stats["max_area"], pixel_area)
+                    self.global_stats["min_area"] = min(self.global_stats["min_area"], pixel_area)
+
+                    # 更新类别统计
+                    self.class_stats[class_id]["images"].add(base_name)
+                    self.class_stats[class_id]["annotations"] += 1
+                    self.class_stats[class_id]["pixel_areas"].append(abs_width * abs_height)
+                    self.class_stats[class_id]["areas_ratios"].append(width * height)
+                    self.class_stats[class_id]["aspect_ratios"].append(width / height if height != 0 else 0)
+        if label_file.endswith('.json'):
+            with open(label_path, 'r') as f:
+                data = json.load(f)
+
+            img_width = data.get("imageWidth", 1)
+            img_height = data.get("imageHeight", 1)
+
+            for shape in data.get("shapes", []):
+                label = shape.get("label")
+                points = shape.get("points", [])
+
+                if len(points) < 2:
+                    continue  # 跳过无效标注
+
+                # 计算边界框
+                x_coords = [p[0] for p in points]
+                y_coords = [p[1] for p in points]
+                x_min, x_max = min(x_coords), max(x_coords)
+                y_min, y_max = min(y_coords), max(y_coords)
+
+                width = x_max - x_min
+                height = y_max - y_min
+                pixel_area = width * height
 
                 # 更新全局统计
                 self.global_stats["total_annotations"] += 1
-                self.global_stats["class_distribution"][class_id] += 1
+                if label not in self.global_stats["class_distribution"]:
+                    self.global_stats["class_distribution"][label] = 0
+                self.global_stats["class_distribution"][label] += 1
                 self.global_stats["max_area"] = max(self.global_stats["max_area"], pixel_area)
                 self.global_stats["min_area"] = min(self.global_stats["min_area"], pixel_area)
 
                 # 更新类别统计
-                self.class_stats[class_id]["images"].add(base_name)
-                self.class_stats[class_id]["annotations"] += 1
-                self.class_stats[class_id]["pixel_areas"].append(abs_width * abs_height)
-                self.class_stats[class_id]["areas_ratios"].append(width * height)
-                self.class_stats[class_id]["aspect_ratios"].append(width / height if height != 0 else 0)
+                if label not in self.class_stats:
+                    self.class_stats[label] = {"images": set(), "annotations": 0, "pixel_areas": [],
+                                               "areas_ratios": [], "aspect_ratios": []}
+
+                self.class_stats[label]["images"].add(base_name)
+                self.class_stats[label]["annotations"] += 1
+                self.class_stats[label]["pixel_areas"].append(pixel_area)
+                self.class_stats[label]["areas_ratios"].append((width / img_width) * (height / img_height))
+                self.class_stats[label]["aspect_ratios"].append(width / height if height != 0 else 0)
+
+
 
     def update_tables(self):
         """更新所有表格数据"""
