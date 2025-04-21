@@ -53,9 +53,10 @@ from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
 from labelme.widgets import Dataset_analysis_Dialog
-from labelme.ai import obb_nms,xywhr2xyxyxyxy,resize_with_padding,calculate_iou
-from labelme.ai import SIFT_Homography,optical_flow_Homography
-from labelme.ai import preprocess,detect_postprocess,obb_detect_postprocess,obb_detect_postprocess_adjust, obb_detect_preprocess_adjust
+from labelme.ai import obb_nms, xywhr2xyxyxyxy, resize_with_padding, calculate_iou
+from labelme.ai import SIFT_Homography, optical_flow_Homography
+from labelme.ai import preprocess, detect_postprocess, obb_detect_postprocess, obb_detect_postprocess_adjust, \
+    obb_detect_preprocess_adjust
 import os
 import json
 import numpy as np
@@ -793,10 +794,10 @@ class MainWindow(QtWidgets.QMainWindow):
             image_unpass=image_unpass,
             QCResult=QCResult,
             create_dataset=create_dataset,
-            dataset_analysis= dataset_analysis,
+            dataset_analysis=dataset_analysis,
             slice_dataset=slice_dataset,
             data_augmentation=data_augmentation,
-            copy_paste_augmentation = copy_paste_augmentation,
+            copy_paste_augmentation=copy_paste_augmentation,
             concat_dataset=concat_dataset,
             yolovis=yolovis,
             video_slice=video_slice,
@@ -894,7 +895,7 @@ class MainWindow(QtWidgets.QMainWindow):
             file=self.menu(self.tr("&File")),
             edit=self.menu(self.tr("&Edit")),
             view=self.menu(self.tr("&View")),
-            help=self.menu(self.tr("&Help")),
+            # help=self.menu(self.tr("&Help")),
             recentFiles=QtWidgets.QMenu(self.tr("Open &Recent")),
             labelList=labelMenu,
         )
@@ -918,7 +919,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 quit,
             ),
         )
-        utils.addActions(self.menus.help, (help,))
+        # utils.addActions(self.menus.help, (help,))
         utils.addActions(
             self.menus.view,
             (
@@ -1791,6 +1792,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lf = LabelFile()
         self.setDirty()
         self.loadFile(self.filename)
+
         def format_shape(s):
             if self.label_list and (type(s[0]) != type('1')):
                 data = dict(
@@ -1815,6 +1817,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     mask=None,
                 )
             return data
+
         shapes = [format_shape(item) for item in res]
         flags = {}
         for i in range(self.flag_widget.count()):
@@ -2441,7 +2444,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.check_Lucas_Kanade.isChecked():
                 H = optical_flow_Homography(pre_image, cur_image)
             if self.check_SIFT.isChecked():
-                H = SIFT_Homography(pre_image,cur_image)
+                H = SIFT_Homography(pre_image, cur_image)
             json_path = os.path.splitext(pre_image_name)[0] + '.json'
             polygon = []
             with open(json_path, 'r') as f:
@@ -2486,7 +2489,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = osp.join(self.output_dir, label_file_without_path)
-            self.pre_shape = self.labelFile.shapes
+            if self.labelFile is not None:
+                self.pre_shape = self.labelFile.shapes
             self.save_AI_Labels(label_file, polygon)
             self.loadFile(self.filename)
 
@@ -2502,7 +2506,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # blob, ratio, image_height, image_width,img_r,img,image_show= obb_detect_preprocess_adjust(image, input_tensors)
         inputs = {self.net.get_inputs()[0].name: blob}
         pred = self.net.run(None, inputs)[0]
-        self.pre_shape = self.labelFile.shapes
+        if self.labelFile is not None:
+            self.pre_shape = self.labelFile.shapes
         if task == "obb":
             polygon = obb_detect_postprocess(pred, self.object_conf_thres, ratio, image_width, image_height)
             # polygon = obb_detect_postprocess_adjust(pred, self.object_conf_thres, ratio, image_width, image_height,img_r,img,image_show)
@@ -2510,6 +2515,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif task == "detect":
             polygon = detect_postprocess(pred, self.object_conf_thres, ratio, image_width, image_height)
             self.save_AI_Labels(label_file, polygon)
+
     def object_detection(self, _value=False):
         if self.check_all_infer.isChecked():
             start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
@@ -2522,7 +2528,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def Text2Label_single(self, _value=False):
         image = labelme.utils.img_qt_to_arr(self.image)
-        self.pre_shape = self.labelFile.shapes
+        if self.labelFile is not None:
+            self.pre_shape = self.labelFile.shapes
         if image.shape[-1] == 1:
             image = np.squeeze(image, axis=-1)
         boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
@@ -2539,6 +2546,7 @@ class MainWindow(QtWidgets.QMainWindow):
             label_file = osp.join(self.output_dir, osp.basename(label_file))
         self.save_AI_Labels(label_file, polygon)
         self.loadFile(self.filename)
+
     def Run_Text2Label(self, _value=False):
         if self.check_all_infer.isChecked():
             start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
@@ -2568,6 +2576,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def create_dataset(self, _value=False):
         dialog = Create_dataset_Dialog()
         dialog.exec_()
+
     def dataset_analysis(self, _value=False):
         dialog = Dataset_analysis_Dialog()
         dialog.exec_()
