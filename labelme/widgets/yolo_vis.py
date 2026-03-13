@@ -61,6 +61,26 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
 
         layout.addLayout(size_layout)
 
+        # Add class names input
+        class_layout = QtWidgets.QHBoxLayout()
+        class_label = QtWidgets.QLabel("Class Names:")
+        self.class_input = QtWidgets.QLineEdit()
+        self.class_input.setPlaceholderText("e.g. person car ship")
+
+        class_layout.addWidget(class_label)
+        class_layout.addWidget(self.class_input)
+        layout.addLayout(class_layout)
+
+        # Class filter
+        filter_layout = QtWidgets.QHBoxLayout()
+        filter_label = QtWidgets.QLabel("Filter Class:")
+        self.filter_input = QtWidgets.QLineEdit()
+        self.filter_input.setPlaceholderText("e.g. ship")
+
+        filter_layout.addWidget(filter_label)
+        filter_layout.addWidget(self.filter_input)
+
+        layout.addLayout(filter_layout)
         # Add checkbox for random order
         self.random_order_checkbox = QtWidgets.QCheckBox("Random Order")
         layout.addWidget(self.random_order_checkbox)
@@ -85,6 +105,12 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
         self.shortcut_next = QtWidgets.QShortcut(QtGui.QKeySequence("D"), self)
         self.shortcut_next.activated.connect(self.show_next_image)
 
+    def get_class_names(self):
+        text = self.class_input.text().strip()
+        if not text:
+            return []
+        return text.split()
+
     def select_folder(self, index):
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
@@ -93,8 +119,14 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
     def start(self):
         image_folder = self.folder_inputs[1].text()
         if os.path.exists(image_folder):
-            self.image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if
-                                f.endswith('.jpg') or f.endswith('.png') or f.endswith('.bmp')]
+            self.image_paths = [
+                os.path.join(image_folder, f)
+                for f in os.listdir(image_folder)
+                if f.endswith('.jpg') or f.endswith('.png') or f.endswith('.bmp')
+            ]
+
+            # 按类别过滤
+            self.image_paths = self.filter_images_by_class(self.image_paths)
             if self.random_order_checkbox.isChecked():
                 random.shuffle(self.image_paths)
             else:
@@ -108,6 +140,54 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
         if self.image_paths:
             self.current_index = (self.current_index - 1) % len(self.image_paths)
             self.display_image_with_annotations(self.image_paths[self.current_index])
+
+    def filter_images_by_class(self, image_paths):
+
+        filter_text = self.filter_input.text().strip()
+
+        if filter_text == "":
+            return image_paths
+
+        class_names = self.get_class_names()
+        filters = filter_text.split()
+        target_ids = set()
+        if class_names:  # 按类别名过滤
+            for name in filters:
+                if name in class_names:
+                    target_ids.add(class_names.index(name))
+                else:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Warning", f"Class '{name}' not found!"
+                    )
+
+        else:  # 按类别ID过滤
+            for f in filters:
+                try:
+                    target_ids.add(int(f))
+                except:
+                    pass
+        if not target_ids:
+            return image_paths
+        filtered_images = []
+        label_folder = self.folder_inputs[0].text()
+        for img_path in image_paths:
+            label_path = os.path.join(
+                label_folder,
+                os.path.splitext(os.path.basename(img_path))[0] + ".txt"
+            )
+            if not os.path.exists(label_path):
+                continue
+            with open(label_path) as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) == 0:
+                        continue
+                    cls = int(float(parts[0]))
+                    if cls in target_ids:
+                        filtered_images.append(img_path)
+                        break
+
+        return filtered_images
 
     def show_next_image(self):
         if self.image_paths:
@@ -164,7 +244,11 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
                         try:
                             cls, x1, y1, x2, y2, x3, y3, x4, y4 = map(float, line.split())
                             cls = int(cls)  # Ensure the class label is an integer
-                            label = cls
+                            class_names = self.get_class_names()
+                            if 0 <= cls < len(class_names):
+                                label = class_names[cls]
+                            else:
+                                label = str(cls)
                             x1 *= scaled_pixmap.width()
                             y1 *= scaled_pixmap.height()
                             x2 *= scaled_pixmap.width()
@@ -237,7 +321,11 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
                         try:
                             cls, x_center, y_center, width, height = map(float, line.split())
                             cls = int(cls)  # Ensure the class label is an integer
-                            label = cls
+                            class_names = self.get_class_names()
+                            if 0 <= cls < len(class_names):
+                                label = class_names[cls]
+                            else:
+                                label = str(cls)
                             x_center *= scaled_pixmap.width()
                             y_center *= scaled_pixmap.height()
                             width *= scaled_pixmap.width()
@@ -252,8 +340,12 @@ class Yolo_Vis_Dialog(QtWidgets.QDialog):
                             # Draw the bounding box
                             painter.drawRect(x1, y1, x2 - x1, y2 - y1)
 
+                            font = QtGui.QFont()
+                            font.setPointSize(10)  # ← 字号，改这里
+                            painter.setFont(font)
+
                             # Draw the label text at the top-left corner of the bounding box
-                            painter.drawText(x1, y1 - 10, str(label))
+                            painter.drawText(x1, y1 - 5, str(label))
                         except:
                             self.errorMessage("Error", self.tr("Invalid label '{}'").format(label_path))
                             break

@@ -2194,8 +2194,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image = image
         self.filename = filename
         total_files = len(self.imageList)  # 总标注数量
-        current_index = self.imageList.index(filename) + 1  # 当前标注索引 (从1开始)
-        self.annotationInfo.setText(f"Current: {current_index} | Total: {total_files} ")
+        if len(self.imageList)!=0:
+            current_index = self.imageList.index(filename) + 1  # 当前标注索引 (从1开始)
+            self.annotationInfo.setText(f"Current: {current_index} | Total: {total_files} ")
         if self._config["keep_prev"]:
             prev_shapes = self.canvas.shapes
         self.canvas.loadPixmap(QtGui.QPixmap.fromImage(image))
@@ -2624,6 +2625,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def adjustScale(self, initial=False):
         value = self.scalers[self.FIT_WINDOW if initial else self.zoomMode]()
         value = int(100 * value)
+        # value = 329
         self.zoomWidget.setValue(value)
         self.zoom_values[self.filename] = (self.zoomMode, value)
 

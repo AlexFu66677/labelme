@@ -268,6 +268,7 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
 
         try:
             # 获取图像和标签文件
+            num_workers = os.cpu_count()
             all_files = os.listdir(dataset_dir)
             image_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             label_files = [f for f in all_files if f.endswith('.txt')]
@@ -279,15 +280,16 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
             self.progress_bar.show()
 
             # 使用线程池处理每个标签文件
-            with ThreadPoolExecutor() as executor:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = {
                     executor.submit(self.process_label_file, dataset_dir, image_files, label_file,
-                                    image_basenames): label_file for
-                    label_file in label_files}
+                                    image_basenames): label_file
+                    for label_file in label_files
+                }
                 for future in as_completed(futures):
                     idx = list(futures.values()).index(futures[future])
                     try:
-                        future.result()  # 捕获异常
+                        future.result()
                     except Exception as e:
                         QtWidgets.QMessageBox.critical(self, "Error", f"处理文件 {futures[future]} 失败：{str(e)}")
                     self.progress_bar.setValue(idx + 1)
@@ -310,7 +312,13 @@ class Dataset_analysis_Dialog(QtWidgets.QDialog):
         if base_name not in image_basenames:
             return
 
-        image_path = os.path.join(dataset_dir, base_name + os.path.splitext(image_files[0])[1])
+        for ext in ['.jpg', '.png', '.jpeg', '.bmp']:
+            image_path = os.path.join(dataset_dir, base_name + ext)
+            if os.path.exists(image_path):
+                break
+        else:
+            print(f"[跳过] 未找到与标签 {label_file} 对应的图像文件")
+            return
         img = plt.imread(image_path)
         img_height, img_width = img.shape[:2]
         label_path = os.path.join(dataset_dir, label_file)

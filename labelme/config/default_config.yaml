@@ -6,7 +6,7 @@ keep_prev_scale: false
 keep_prev_brightness: false
 keep_prev_contrast: false
 logger_level: info
-device: cpu
+device: cuda
 
 flags: null
 label_flags: null
@@ -147,7 +147,7 @@ shortcuts:
   #创建多段线
   create_linestrip: null
   #编辑模式
-  edit_polygon: B
+  edit_polygon: Space
   #删除多边形
   delete_polygon: F
   #拷贝多边形(本张图象直接生成复制框)

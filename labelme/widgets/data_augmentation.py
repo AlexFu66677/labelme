@@ -234,7 +234,9 @@ class Data_augmentation_Dialog(QtWidgets.QDialog):
         for index, image_path in enumerate(image_paths):
             img = cv2.imread(image_path)
             filename = os.path.basename(image_path)
-            txt_path = os.path.splitext(image_path)[0] + ".txt"  # 对应的YOLO标注
+            txt_path = os.path.splitext(image_path)[0] + ".txt"  # 对应的YOLO标注文件
+            if not os.path.exists(txt_path):
+                continue
             yolo_data = self.load_yolo_labels(txt_path)
 
             if self.padding_checkbox.isChecked():

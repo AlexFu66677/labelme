@@ -602,9 +602,9 @@ class copy_paste_augmentation_Dialog(QDialog):
                             os.path.dirname(self.image_path))
 
 
-# if __name__ == "__main__":
-#     app = QApplication(sys.argv)
-#     window = ImageWindow()
-#     window.show()
-#
-#     sys.exit(app.exec_())
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = ImageWindow()
+    window.show()
+
+    sys.exit(app.exec_())
