@@ -2,6 +2,95 @@ import onnxruntime as ort
 import numpy as np
 import cv2
 
+
+HOMOGRAPHY_MAX_SIDE = 1600
+HOMOGRAPHY_MAX_CORNERS = 200
+HOMOGRAPHY_MAX_SIFT_FEATURES = 400
+HOMOGRAPHY_MAX_MATCHES = 120
+HOMOGRAPHY_MIN_INLIERS = 12
+HOMOGRAPHY_MIN_INLIER_RATIO = 0.35
+HOMOGRAPHY_MAX_REPROJECTION_ERROR = 6.0
+
+
+def _identity_homography():
+    return np.eye(3, dtype=np.float32)
+
+
+def _resize_for_homography(image, max_side=HOMOGRAPHY_MAX_SIDE):
+    height, width = image.shape[:2]
+    longest_side = max(height, width)
+    if longest_side <= max_side:
+        return image, 1.0, 1.0
+
+    scale = float(max_side) / float(longest_side)
+    resized = cv2.resize(
+        image,
+        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    scale_x = float(width) / float(resized.shape[1])
+    scale_y = float(height) / float(resized.shape[0])
+    return resized, scale_x, scale_y
+
+
+def _restore_homography_scale(H, src_scale_x, src_scale_y, dst_scale_x, dst_scale_y):
+    src_scale = np.array(
+        [[src_scale_x, 0, 0], [0, src_scale_y, 0], [0, 0, 1]],
+        dtype=np.float32,
+    )
+    dst_scale = np.array(
+        [[dst_scale_x, 0, 0], [0, dst_scale_y, 0], [0, 0, 1]],
+        dtype=np.float32,
+    )
+    return np.dot(np.dot(dst_scale, H), np.linalg.inv(src_scale))
+
+
+def _fit_homography(src_pts, dst_pts):
+    if src_pts is None or dst_pts is None or len(src_pts) < 4 or len(dst_pts) < 4:
+        return _identity_homography()
+    H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+    if H is None:
+        return _identity_homography()
+    return H.astype(np.float32)
+
+
+def _estimate_valid_homography(src_pts, dst_pts):
+    if src_pts is None or dst_pts is None:
+        return None
+
+    src_pts = np.asarray(src_pts, dtype=np.float32).reshape(-1, 1, 2)
+    dst_pts = np.asarray(dst_pts, dtype=np.float32).reshape(-1, 1, 2)
+    if len(src_pts) < 4 or len(dst_pts) < 4:
+        return None
+
+    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+    if H is None or mask is None:
+        return None
+
+    H = H.astype(np.float32)
+    if not np.all(np.isfinite(H)):
+        return None
+
+    inlier_mask = mask.ravel().astype(bool)
+    inlier_count = int(np.count_nonzero(inlier_mask))
+    inlier_ratio = float(inlier_count) / float(len(src_pts))
+    if inlier_count < HOMOGRAPHY_MIN_INLIERS:
+        return None
+    if inlier_ratio < HOMOGRAPHY_MIN_INLIER_RATIO:
+        return None
+
+    projected = cv2.perspectiveTransform(src_pts[inlier_mask], H)
+    reprojection_error = np.linalg.norm(
+        projected.reshape(-1, 2) - dst_pts[inlier_mask].reshape(-1, 2),
+        axis=1,
+    )
+    if reprojection_error.size == 0:
+        return None
+    if float(np.median(reprojection_error)) > HOMOGRAPHY_MAX_REPROJECTION_ERROR:
+        return None
+
+    return H
+
 def nms(pred, conf_thres, iou_thres):
     conf = pred[..., 4] > conf_thres
     box = pred[conf == True]
@@ -186,25 +275,102 @@ def optical_flow(pre_image, cur_image):
     good_prev_pts = prev_pts[status == 1]
     good_cur_pts = cur_pts[status == 1]
     # 计算单应性矩阵
-    H, mask = cv2.findHomography(good_prev_pts, good_cur_pts, cv2.RANSAC, 5.0)
+    H = _estimate_valid_homography(good_prev_pts, good_cur_pts)
     return H
+
+def extract_features_by_quadrants(image, max_corners_total=800,
+                                  quality_level=0.1, min_distance=10, block_size=10):
+    """
+    将图像分成4块，每块单独提取角点，再合并为整图坐标
+    """
+    h, w = image.shape[:2]
+    h_mid, w_mid = h // 2, w // 2
+
+    # 四个区域: 左上、右上、左下、右下
+    rois = [
+        (0, h_mid, 0, w_mid),      # top-left
+        (0, h_mid, w_mid, w),      # top-right
+        (h_mid, h, 0, w_mid),      # bottom-left
+        (h_mid, h, w_mid, w)       # bottom-right
+    ]
+
+    pts_all = []
+    max_corners_each = max_corners_total // 4
+
+    feature_params = dict(
+        maxCorners=max_corners_each,
+        qualityLevel=quality_level,
+        minDistance=min_distance,
+        blockSize=block_size
+    )
+
+    for y1, y2, x1, x2 in rois:
+        roi = image[y1:y2, x1:x2]
+        pts = cv2.goodFeaturesToTrack(roi, mask=None, **feature_params)
+
+        if pts is not None:
+            # 把 ROI 内坐标映射回原图坐标
+            pts[:, 0, 0] += x1
+            pts[:, 0, 1] += y1
+            pts_all.append(pts)
+
+    if len(pts_all) == 0:
+        return None
+
+    return np.vstack(pts_all).astype(np.float32)
+
 
 def optical_flow_Homography(pre_image, cur_image):
-    feature_params = dict(maxCorners=500, qualityLevel=0.1, minDistance=10, blockSize=10)
-    prev_pts = cv2.goodFeaturesToTrack(pre_image, mask=None, **feature_params)
-    lk_params = dict(winSize=(20, 20), maxLevel=3,
-                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03))
-    cur_pts, status, err = cv2.calcOpticalFlowPyrLK(pre_image, cur_image, prev_pts, None, **lk_params)
-    good_prev_pts = prev_pts[status == 1]
-    good_cur_pts = cur_pts[status == 1]
-    # 计算单应性矩阵
-    H, mask = cv2.findHomography(good_prev_pts, good_cur_pts, cv2.RANSAC, 5.0)
-    return H
+    pre_image, pre_scale_x, pre_scale_y = _resize_for_homography(pre_image)
+    cur_image, cur_scale_x, cur_scale_y = _resize_for_homography(cur_image)
 
-def SIFT_Homography(pre_image, cur_image):
-    sift = cv2.SIFT_create()
+    prev_pts = extract_features_by_quadrants(
+        pre_image,
+        max_corners_total=800,
+        quality_level=0.1,
+        min_distance=10,
+        block_size=10
+    )
+
+    if prev_pts is None or len(prev_pts) < 4:
+        return None
+
+    lk_params = dict(
+        winSize=(20, 20),
+        maxLevel=3,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
+    )
+
+    cur_pts, status, err = cv2.calcOpticalFlowPyrLK(
+        pre_image, cur_image, prev_pts, None, **lk_params
+    )
+
+    if cur_pts is None or status is None:
+        return None
+
+    good_prev_pts = prev_pts[status.flatten() == 1]
+    good_cur_pts = cur_pts[status.flatten() == 1]
+
+    if len(good_prev_pts) < 4 or len(good_cur_pts) < 4:
+        return None
+
+    H = _estimate_valid_homography(good_prev_pts, good_cur_pts)
+    if H is None:
+        return None
+
+    return _restore_homography_scale(
+        H, pre_scale_x, pre_scale_y, cur_scale_x, cur_scale_y
+    ).astype(np.float32)
+
+def _legacy_SIFT_Homography(pre_image, cur_image):
+    pre_image, pre_scale_x, pre_scale_y = _resize_for_homography(pre_image)
+    cur_image, cur_scale_x, cur_scale_y = _resize_for_homography(cur_image)
+
+    sift = cv2.SIFT_create(nfeatures=HOMOGRAPHY_MAX_SIFT_FEATURES)
     keypoints1, descriptors1 = sift.detectAndCompute(pre_image, None)
     keypoints2, descriptors2 = sift.detectAndCompute(cur_image, None)
+    if descriptors1 is None or descriptors2 is None:
+        return None
     # 创建FLANN匹配器
     FLANN_INDEX_KDTREE = 0
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
@@ -226,6 +392,51 @@ def SIFT_Homography(pre_image, cur_image):
     return H
 
 #图像预处理
+def SIFT_Homography(pre_image, cur_image):
+    pre_image, pre_scale_x, pre_scale_y = _resize_for_homography(pre_image)
+    cur_image, cur_scale_x, cur_scale_y = _resize_for_homography(cur_image)
+
+    sift = cv2.SIFT_create(nfeatures=HOMOGRAPHY_MAX_SIFT_FEATURES)
+    keypoints1, descriptors1 = sift.detectAndCompute(pre_image, None)
+    keypoints2, descriptors2 = sift.detectAndCompute(cur_image, None)
+    if descriptors1 is None or descriptors2 is None:
+        return None
+
+    FLANN_INDEX_KDTREE = 0
+    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+    search_params = dict(checks=50)
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+    matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+    good_matches = []
+    for match_pair in matches:
+        if len(match_pair) < 2:
+            continue
+        m, n = match_pair
+        if m.distance < 0.7 * n.distance:
+            good_matches.append(m)
+
+    if len(good_matches) < 4:
+        return None
+
+    good_matches = sorted(good_matches, key=lambda match: match.distance)[
+        :HOMOGRAPHY_MAX_MATCHES
+    ]
+    src_pts = np.float32(
+        [keypoints1[m.queryIdx].pt for m in good_matches]
+    ).reshape(-1, 1, 2)
+    dst_pts = np.float32(
+        [keypoints2[m.trainIdx].pt for m in good_matches]
+    ).reshape(-1, 1, 2)
+    H = _estimate_valid_homography(src_pts, dst_pts)
+    if H is None:
+        return None
+
+    return _restore_homography_scale(
+        H, pre_scale_x, pre_scale_y, cur_scale_x, cur_scale_y
+    ).astype(np.float32)
+
+
 def preprocess(image, input_tensors):
     for input_tensor in input_tensors:
         input_info = {

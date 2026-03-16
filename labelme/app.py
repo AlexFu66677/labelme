@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 import functools
 import html
@@ -49,6 +49,8 @@ from labelme.widgets import FileDialogPreview
 from labelme.widgets import LabelDialog
 from labelme.widgets import LabelListWidget
 from labelme.widgets import LabelListWidgetItem
+from labelme.widgets import ObjectDetectionWindow
+from labelme.widgets import SequenceWarpingWindow
 from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
@@ -72,6 +74,7 @@ from . import utils
 
 
 LABEL_COLORMAP = imgviz.label_colormap()
+SEQUENCE_WARPING_MAX_SIDE = 1280
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -275,19 +278,21 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         object = action(
             self.tr("&目标检测"),
-            self.object_detection,
+            self.toggleObjectDetectionPanel,
             shortcuts["object"],
             "object",
             self.tr("目标检测"),
             enabled=False,
+            checkable=True,
         )
         sequence_warping = action(
             self.tr("&标注映射"),
-            self.sequence_warping,
+            self.toggleSequenceWarpingPanel,
             shortcuts["sequence_warping"],
             "warping",
             self.tr("标注映射"),
             enabled=False,
+            checkable=True,
         )
         image_pass = action(
             self.tr("&复核通过"),
@@ -961,11 +966,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.check_all_infer = QtWidgets.QCheckBox("推理全部图像", self)
         self.check_save_existing_label = QtWidgets.QCheckBox("保留已有标签", self)
-        Check_AI_config_layout = QtWidgets.QWidgetAction(self)
-        Check_AI_config_layout.setDefaultWidget(QtWidgets.QWidget())
-        Check_AI_config_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        Check_AI_config_layout.defaultWidget().layout().addWidget(self.check_all_infer)
-        Check_AI_config_layout.defaultWidget().layout().addWidget(self.check_save_existing_label)
 
         self.check_Lucas_Kanade = QtWidgets.QCheckBox("L-K", self)
         self.check_SIFT = QtWidgets.QCheckBox("SIFT", self)
@@ -974,11 +974,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.homography_group.addButton(self.check_Lucas_Kanade)
         self.homography_group.addButton(self.check_SIFT)
         self.homography_group.setExclusive(True)  # 互斥模式
-        Check_Homography_layout = QtWidgets.QWidgetAction(self)
-        Check_Homography_layout.setDefaultWidget(QtWidgets.QWidget())
-        Check_Homography_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        Check_Homography_layout.defaultWidget().layout().addWidget(self.check_Lucas_Kanade)
-        Check_Homography_layout.defaultWidget().layout().addWidget(self.check_SIFT)
         self.check_center = QtWidgets.QCheckBox("中心映射", self)
         self.check_edge = QtWidgets.QCheckBox("边缘映射", self)
         self.check_edge.setChecked(True)
@@ -986,13 +981,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.warp_method_group.addButton(self.check_center)
         self.warp_method_group.addButton(self.check_edge)
         self.warp_method_group.setExclusive(True)  # 互斥模式
-        Check_warp_method_layout = QtWidgets.QWidgetAction(self)
-        Check_warp_method_layout.setDefaultWidget(QtWidgets.QWidget())
-        Check_warp_method_layout.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        Check_warp_method_layout.defaultWidget().layout().addWidget(self.check_center)
-        Check_warp_method_layout.defaultWidget().layout().addWidget(self.check_edge)
         self.homography_thres = 0.3
         self.homography_thres_text = QtWidgets.QLineEdit(self)
+        self.homography_thres_text.setText(str(self.homography_thres))
         self.homography_thres_text.setPlaceholderText("IOU(0-1)")
         self.homography_thres_text.setFixedWidth(80)
         self.homography_thres_button = QtWidgets.QPushButton("设置iou", self)
@@ -1003,57 +994,99 @@ class MainWindow(QtWidgets.QMainWindow):
         homography_thres_layout.addWidget(self.homography_thres_text)
         homography_thres_layout.addWidget(self.homography_thres_button)
 
-        homography_undo_layout = QtWidgets.QHBoxLayout()
-        homography_undo_layout.addWidget(self.keep_current_label)
-        homography_undo_layout.addWidget(self.undo_shapes_button)
-        homography_thres_action = QtWidgets.QWidgetAction(self)
-        homography_thres_action.setDefaultWidget(QtWidgets.QWidget())
-        homography_thres_action.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        homography_thres_action.defaultWidget().setFixedWidth(180)
-        homography_thres_action.defaultWidget().layout().addLayout(homography_thres_layout)
-        homography_thres_action.defaultWidget().layout().addLayout(homography_undo_layout)
-
         self.object_conf_thres = 0.25
         self.object_conf_thres_text = QtWidgets.QLineEdit(self)
+        self.object_conf_thres_text.setText(str(self.object_conf_thres))
         self.object_conf_thres_text.setPlaceholderText("Conf(0-1)")
-        self.object_conf_thres_button = QtWidgets.QPushButton("检测阈值", self)
-        object_conf_thres_action = QtWidgets.QWidgetAction(self)
-        object_conf_thres_action.setDefaultWidget(QtWidgets.QWidget())
-        object_conf_thres_action.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        object_conf_thres_action.defaultWidget().setFixedWidth(100)
-        object_conf_thres_action.defaultWidget().layout().addWidget(self.object_conf_thres_text)
-        object_conf_thres_action.defaultWidget().layout().addWidget(self.object_conf_thres_button)
         self.homography_thres_button.clicked.connect(self.update_homography_threshold)
-        self.object_conf_thres_button.clicked.connect(self.update_object_conf_threshold)
+        self.object_conf_thres_text.editingFinished.connect(self.update_object_conf_threshold)
         self.undo_shapes_button.clicked.connect(self.undo_shapes)
         self.pre_shape = []
+        self.object_detection_enabled = False
+        self.sequence_warping_enabled = False
+        self.sequence_warping_window = SequenceWarpingWindow(self)
+        self.sequence_warping_window.closed.connect(
+            self.onSequenceWarpingWindowClosed
+        )
+        self.sequence_warping_apply_button = QtWidgets.QPushButton(
+            self.tr("开始映射"),
+            self.sequence_warping_window,
+        )
+        self.sequence_warping_apply_button.clicked.connect(self.sequence_warping)
+        sequence_warping_hint = QtWidgets.QLabel(
+            self.tr("Keep this window open to adjust mapped targets in the main view."),
+            self.sequence_warping_window,
+        )
+        sequence_warping_hint.setWordWrap(True)
+        sequence_warping_layout = QtWidgets.QVBoxLayout()
+        sequence_warping_layout.addWidget(self.check_Lucas_Kanade)
+        sequence_warping_layout.addWidget(self.check_SIFT)
+        sequence_warping_layout.addSpacing(4)
+        sequence_warping_layout.addWidget(self.check_center)
+        sequence_warping_layout.addWidget(self.check_edge)
+        sequence_warping_layout.addSpacing(4)
+        sequence_warping_layout.addLayout(homography_thres_layout)
+        sequence_warping_layout.addWidget(self.keep_current_label)
+        sequence_warping_layout.addWidget(self.undo_shapes_button)
+        sequence_warping_layout.addWidget(self.sequence_warping_apply_button)
+        sequence_warping_layout.addWidget(sequence_warping_hint)
+        self.sequence_warping_window.setLayout(sequence_warping_layout)
 
-        # 创建一个主widget和布局
+        self.object_detection_window = ObjectDetectionWindow(self)
+        self.object_detection_window.closed.connect(
+            self.onObjectDetectionWindowClosed
+        )
+        self.object_detection_select_model_button = QtWidgets.QPushButton(
+            self.tr("选择 ONNX 模型"), self.object_detection_window
+        )
+        self.object_detection_select_model_button.clicked.connect(self.select_onnx)
+        self.object_detection_select_model_button.setProperty("variant", "primary")
+        self.object_detection_onnx_path = QtWidgets.QLineEdit(self.object_detection_window)
+        self.object_detection_onnx_path.setReadOnly(True)
+        self.object_detection_onnx_path.setPlaceholderText(self.tr("未选择目标检测模型"))
+        self.object_detection_run_button = QtWidgets.QPushButton(
+            self.tr("开始目标检测"), self.object_detection_window
+        )
+        self.object_detection_run_button.clicked.connect(self.object_detection)
+        self.object_detection_stop_button = QtWidgets.QPushButton(
+            self.tr("停止检测"), self.object_detection_window
+        )
+        self.object_detection_stop_button.clicked.connect(
+            self.requestStopAiAnnotation
+        )
+        self.object_detection_stop_button.setEnabled(False)
+        self.text2label_stop_button = QtWidgets.QPushButton(
+            self.tr("停止检测"), self.object_detection_window
+        )
+        self.text2label_stop_button.clicked.connect(
+            self.requestStopAiAnnotation
+        )
+        self.text2label_stop_button.setEnabled(False)
+        self.check_all_infer_dino = QtWidgets.QCheckBox("处理全部图像", self.object_detection_window)
+        self.check_save_existing_label_dino = QtWidgets.QCheckBox("保留已有标签", self.object_detection_window)
+        self.ai_annotation_stop_requested = False
+        self.ai_annotation_is_running = False
+        self.ai_annotation_controls = {
+            "object_detection": {
+                "run_all": self.check_all_infer,
+                "keep_existing": self.check_save_existing_label,
+            },
+            "grounding_dino": {
+                "run_all": self.check_all_infer_dino,
+                "keep_existing": self.check_save_existing_label_dino,
+            },
+        }
+
         selectAiWidget = QtWidgets.QWidget()
         selectAiLayout = QtWidgets.QVBoxLayout(selectAiWidget)
-
-        # 第一个 "DINO" 部分
-        selectAiText2LabelModelLabel = QtWidgets.QLabel(self.tr("DINO:"))
-        selectAiText2LabelModelLabel.setAlignment(QtCore.Qt.AlignCenter)
         self._selectAiText2LabelModelComboBox = QtWidgets.QComboBox()
-
-        # 创建第一个部分的布局
-        text2LabelLayout = QtWidgets.QHBoxLayout()
-        text2LabelLayout.addWidget(selectAiText2LabelModelLabel)
-        text2LabelLayout.addWidget(self._selectAiText2LabelModelComboBox)
-        # 添加第一个部分到主布局
-        selectAiLayout.addLayout(text2LabelLayout)
-        # 第二个 "SAM" 部分
         selectAiModelLabel = QtWidgets.QLabel(self.tr("SAM:"))
         selectAiModelLabel.setAlignment(QtCore.Qt.AlignCenter)
         self._selectAiModelComboBox = QtWidgets.QComboBox()
-        # 创建第二个部分的布局
         aiModelLayout = QtWidgets.QHBoxLayout()
         aiModelLayout.addWidget(selectAiModelLabel)
         aiModelLayout.addWidget(self._selectAiModelComboBox)
-        # 添加第二个部分到主布局
         selectAiLayout.addLayout(aiModelLayout)
-        # 设置整体布局
         selectAiModel = QtWidgets.QWidgetAction(self)
         selectAiModel.setDefaultWidget(selectAiWidget)
 
@@ -1073,15 +1106,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.device
             )
         )
-        Text2Label_Input = QtWidgets.QWidgetAction(self)
-        Text2Label_Input.setDefaultWidget(QtWidgets.QWidget())
-        Text2Label_Input.defaultWidget().setLayout(QtWidgets.QVBoxLayout())
-        Text2Label_Input.defaultWidget().setFixedWidth(200)
         self.Text2Label_Text = QtWidgets.QLineEdit(self)
-        self.Text2Label_detect_button = QtWidgets.QPushButton("TEXT-LABEL", self)
+        self.Text2Label_detect_button = QtWidgets.QPushButton("Grounding DINO 检测", self)
         self.Text2Label_Text.setAlignment(QtCore.Qt.AlignCenter)
-        Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_Text)
-        Text2Label_Input.defaultWidget().layout().addWidget(self.Text2Label_detect_button)
         self.Text2Label_detect_button.clicked.connect(self.Run_Text2Label)
         Text2Label_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcuts["Text2Label"]), self)
         Text2Label_shortcut.activated.connect(self.Text2Label_detect_button.click)
@@ -1105,17 +1132,61 @@ class MainWindow(QtWidgets.QMainWindow):
             else None
         )
 
+        detection_panel_layout = QtWidgets.QVBoxLayout()
+        detection_panel_layout.setContentsMargins(12, 12, 12, 12)
+        detection_panel_layout.setSpacing(8)
+
+        detection_intro = QtWidgets.QLabel(
+            self.tr("在当前图像或整个序列上执行检测，并保存标签。"),
+            self.object_detection_window,
+        )
+        detection_intro.setWordWrap(True)
+        detection_panel_layout.addWidget(detection_intro)
+
+        model_group = QtWidgets.QGroupBox(self.tr("目标检测"), self.object_detection_window)
+        model_layout = QtWidgets.QVBoxLayout()
+        model_layout.setSpacing(6)
+        self.object_conf_thres_text.setFixedWidth(80)
+        object_conf_layout = QtWidgets.QHBoxLayout()
+        object_conf_layout.addWidget(QtWidgets.QLabel("置信度阈值", self.object_detection_window))
+        object_conf_layout.addWidget(self.object_conf_thres_text)
+        model_layout.addWidget(self.object_detection_select_model_button)
+        model_layout.addWidget(self.object_detection_onnx_path)
+        model_layout.addLayout(object_conf_layout)
+        model_layout.addWidget(self.check_all_infer)
+        model_layout.addWidget(self.check_save_existing_label)
+        model_layout.addWidget(self.object_detection_run_button)
+        model_layout.addWidget(self.object_detection_stop_button)
+        model_group.setLayout(model_layout)
+        detection_panel_layout.addWidget(model_group)
+
+        dino_group = QtWidgets.QGroupBox(self.tr("Grounding DINO"), self.object_detection_window)
+        dino_layout = QtWidgets.QVBoxLayout()
+        dino_layout.setSpacing(6)
+        self.Text2Label_Text.setPlaceholderText(self.tr("输入文本提示，例如 car.person"))
+        dino_layout.addWidget(self._selectAiText2LabelModelComboBox)
+        dino_layout.addWidget(self.Text2Label_Text)
+        dino_layout.addWidget(self.check_all_infer_dino)
+        dino_layout.addWidget(self.check_save_existing_label_dino)
+        dino_layout.addWidget(self.Text2Label_detect_button)
+        dino_layout.addWidget(self.text2label_stop_button)
+        dino_group.setLayout(dino_layout)
+        detection_panel_layout.addWidget(dino_group)
+        detection_panel_layout.addStretch()
+        self.object_detection_window.setLayout(detection_panel_layout)
+        self._refreshDetectionPanelState()
+
         self.tools = self.toolbar("Tools")
         self.lefttools = self.lefttoolbar("LeftTools")
 
         self.actions.lefttool = (
-            select_onnx,
             object,
-            rotate,
+            sequence_warping,
+            # rotate,
             # video_object,
             fitWindow,
-            zoomIn,
-            zoomOut,
+            # zoomIn,
+            # zoomOut,
             create_dataset,
             dataset_analysis,
             slice_dataset,
@@ -1125,9 +1196,9 @@ class MainWindow(QtWidgets.QMainWindow):
             data_augmentation,
             # copy_paste_augmentation,
             None,
-            image_pass,
-            image_unpass,
-            QCResult,
+            # image_pass,
+            # image_unpass,
+            # QCResult,
         )
 
         self.actions.tool = (
@@ -1146,16 +1217,7 @@ class MainWindow(QtWidgets.QMainWindow):
             None,
             zoom,
             None,
-            sequence_warping,
-            Check_Homography_layout,
-            Check_warp_method_layout,
-            homography_thres_action,
-            None,
-            Check_AI_config_layout,
-            object_conf_thres_action,
-            None,
             selectAiModel,
-            Text2Label_Input,
             None,
         )
 
@@ -1353,6 +1415,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(message, delay)
 
     def resetState(self):
+        # self.closeSequenceWarpingPanel()
+        # self.closeObjectDetectionPanel()
         self.labelList.clear()
         self.filename = None
         self.imagePath = None
@@ -1600,6 +1664,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for shape in self.canvas.selectedShapes:
             shape.selected = True
             item = self.labelList.findItemByShape(shape)
+            if item is None:
+                continue
             self.labelList.selectItem(item)
             self.labelList.scrollToItem(item)
         self._noSelectionSlot = False
@@ -1666,7 +1732,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             for shape in shapes:
                 item = self.labelList.findItemByShape(shape)
-                self.labelList.removeItem(item)
+                if item is not None:
+                    self.labelList.removeItem(item)
         except:
             return
 
@@ -1867,7 +1934,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return False
 
-    def save_AI_Labels(self, filename, res, imagePass=None):
+    def save_AI_Labels(self, filename, res, imagePass=None, keep_existing=None):
         lf = LabelFile()
         self.setDirty()
         self.loadFile(self.filename)
@@ -1904,7 +1971,9 @@ class MainWindow(QtWidgets.QMainWindow):
             flag = item.checkState() == Qt.Checked
             flags[key] = flag
         try:
-            if self.check_save_existing_label.isChecked():
+            if keep_existing is None:
+                keep_existing = self.check_save_existing_label.isChecked()
+            if keep_existing:
                 if self.labelFile:
                     if self.labelFile.shapes:
                         # 如果不为空，将新 shapes 追加到现有的 shapes 中
@@ -2214,7 +2283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.setEnabled(True)
         self.actions.rotate.setEnabled(False)
         self.actions.select_onnx.setEnabled(True)
-        # self.actions.object.setEnabled(True)
+        self.actions.object.setEnabled(True)
         self.actions.sequence_warping.setEnabled(True)
         # set zoom values
         is_initial_load = not self.zoom_values
@@ -2256,6 +2325,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.paintCanvas()
         self.addRecentFile(self.filename)
         self.toggleActions(True)
+        self._refreshDetectionPanelState()
         self.canvas.setFocus()
         self.status(str(self.tr("Loaded %s")) % osp.basename(str(filename)))
         return True
@@ -2290,7 +2360,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.undoLastPoint.setEnabled(True)
             self.actions.undo.setEnabled(True)
             self.actions.select_onnx.setEnabled(True)
-            # self.actions.object.setEnabled(True)
+            self.actions.object.setEnabled(True)
             self.actions.sequence_warping.setEnabled(True)
         else:
             self.canvas.setEnabled(False)
@@ -2307,6 +2377,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.select_onnx.setEnabled(False)
             self.actions.object.setEnabled(False)
             self.actions.sequence_warping.setEnabled(False)
+            self.closeObjectDetectionPanel()
+            self.closeSequenceWarpingPanel()
         if self.labelFile:
             shapes = self.labelFile.shapes
             s = []
@@ -2356,15 +2428,9 @@ class MainWindow(QtWidgets.QMainWindow):
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getOpenFileName(self, 'Select ONNX File', '', 'ONNX Files (*.onnx);;All Files (*)',
                                                    options=options)
-        self.onnx_path = file_name
-        if not self.onnx_path:
-            self.errorMessage(
-                self.tr("Invalid onnxfile"),
-                self.tr("Invalid onnxfile '{}'").format(
-                    self.onnx_path
-                ),
-            )
+        if not file_name:
             return False
+        self.onnx_path = file_name
         so = ort.SessionOptions()
         so.log_severity_level = 4
         if self.device == "cpu":
@@ -2380,6 +2446,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return False
         self.actions.object.setEnabled(True)
+        self._refreshDetectionPanelState()
         self.actions.rotate.setEnabled(False)
 
     def init_text2lable_model(self, config_path, model_path, device, _value=False):
@@ -2394,6 +2461,97 @@ class MainWindow(QtWidgets.QMainWindow):
         self.text2label_model = GroundingDINO(model_path, 0.3, "./ai/seg_model/vocab.txt", device, 0.25)
         self.actions.rotate.setEnabled(False)
         return self.text2label_model
+
+    def _refreshDetectionPanelState(self):
+        if hasattr(self, "object_detection_onnx_path"):
+            self.object_detection_onnx_path.setText(
+                getattr(self, "onnx_path", "") or ""
+            )
+        if hasattr(self, "object_detection_run_button"):
+            self.object_detection_run_button.setEnabled(bool(getattr(self, "net", None)))
+
+    def _get_ai_annotation_options(self, algorithm_name):
+        controls = self.ai_annotation_controls[algorithm_name]
+        return {
+            "run_all_images": controls["run_all"].isChecked(),
+            "keep_existing_labels": controls["keep_existing"].isChecked(),
+        }
+
+    def _set_ai_annotation_running(self, running):
+        self.ai_annotation_is_running = running
+        self.object_detection_stop_button.setEnabled(running)
+        self.text2label_stop_button.setEnabled(running)
+        self.object_detection_run_button.setEnabled(
+            bool(getattr(self, "net", None)) and not running
+        )
+        self.Text2Label_detect_button.setEnabled(not running)
+
+    def requestStopAiAnnotation(self):
+        if self.ai_annotation_is_running:
+            self.ai_annotation_stop_requested = True
+
+    def _run_ai_annotation(self, algorithm_name, single_runner, reload_current=False):
+        options = self._get_ai_annotation_options(algorithm_name)
+        self.ai_annotation_stop_requested = False
+        self._set_ai_annotation_running(True)
+        try:
+            if options["run_all_images"]:
+                start_index = self.imageList.index(self.filename)
+                for i in range(start_index, len(self.imageList)):
+                    QtWidgets.QApplication.processEvents()
+                    if self.ai_annotation_stop_requested:
+                        break
+                    single_runner(options)
+                    QtWidgets.QApplication.processEvents()
+                    if self.ai_annotation_stop_requested:
+                        break
+                    self.openNextImg()
+            else:
+                single_runner(options)
+                if reload_current:
+                    self.loadFile(self.filename)
+        finally:
+            self.ai_annotation_stop_requested = False
+            self._set_ai_annotation_running(False)
+
+    def toggleObjectDetectionPanel(self, checked=False):
+        self.object_detection_enabled = checked
+        if checked:
+            self._refreshDetectionPanelState()
+            self.object_detection_window.show()
+            self.object_detection_window.raise_()
+            self.object_detection_window.activateWindow()
+        else:
+            self.object_detection_window.hide()
+
+    def onObjectDetectionWindowClosed(self):
+        self.object_detection_enabled = False
+        self.actions.object.setChecked(False)
+
+    def closeObjectDetectionPanel(self):
+        if self.object_detection_window.isVisible():
+            self.object_detection_window.close()
+        else:
+            self.onObjectDetectionWindowClosed()
+
+    def toggleSequenceWarpingPanel(self, checked=False):
+        self.sequence_warping_enabled = checked
+        if checked:
+            self.sequence_warping_window.show()
+            self.sequence_warping_window.raise_()
+            self.sequence_warping_window.activateWindow()
+        else:
+            self.sequence_warping_window.hide()
+
+    def onSequenceWarpingWindowClosed(self):
+        self.sequence_warping_enabled = False
+        self.actions.sequence_warping.setChecked(False)
+
+    def closeSequenceWarpingPanel(self):
+        if self.sequence_warping_window.isVisible():
+            self.sequence_warping_window.close()
+        else:
+            self.onSequenceWarpingWindowClosed()
 
     def update_homography_threshold(self):
         # Update the homography threshold from the QLineEdit input
@@ -2429,11 +2587,72 @@ class MainWindow(QtWidgets.QMainWindow):
         # Update the object confidence threshold from the QLineEdit input
         try:
             self.object_conf_thres = float(self.object_conf_thres_text.text())
-            print(f"Updated Object Confidence Threshold: {self.object_conf_thres}")
         except ValueError:
             print("Invalid input for Object Confidence Threshold")
 
+    def _limit_sequence_warping_images(self, pre_image, cur_image):
+        max_side = max(
+            pre_image.shape[0],
+            pre_image.shape[1],
+            cur_image.shape[0],
+            cur_image.shape[1],
+        )
+        if max_side <= SEQUENCE_WARPING_MAX_SIDE:
+            return pre_image, cur_image
+
+        scale = float(SEQUENCE_WARPING_MAX_SIDE) / float(max_side)
+        pre_size = (
+            max(1, int(round(pre_image.shape[1] * scale))),
+            max(1, int(round(pre_image.shape[0] * scale))),
+        )
+        cur_size = (
+            max(1, int(round(cur_image.shape[1] * scale))),
+            max(1, int(round(cur_image.shape[0] * scale))),
+        )
+        return (
+            cv2.resize(pre_image, pre_size, interpolation=cv2.INTER_AREA),
+            cv2.resize(cur_image, cur_size, interpolation=cv2.INTER_AREA),
+        )
+
+    def _warp_bbox_with_homography(self, points, H, image_width, image_height):
+        x0, y0 = points[0]
+        x1, y1 = points[1]
+        left = min(x0, x1)
+        right = max(x0, x1)
+        top = min(y0, y1)
+        bottom = max(y0, y1)
+        box_corners = np.array(
+            [[left, top], [right, top], [right, bottom], [left, bottom]],
+            dtype=np.float32,
+        ).reshape(-1, 1, 2)
+        warped_corners = cv2.perspectiveTransform(box_corners, H).reshape(-1, 2)
+        if not np.all(np.isfinite(warped_corners)):
+            return None
+
+        min_corner = warped_corners.min(axis=0)
+        max_corner = warped_corners.max(axis=0)
+        if (
+            max_corner[0] < 0
+            or max_corner[1] < 0
+            or min_corner[0] >= image_width
+            or min_corner[1] >= image_height
+        ):
+            return None
+
+        min_corner[0] = np.clip(min_corner[0], 0, image_width - 1)
+        min_corner[1] = np.clip(min_corner[1], 0, image_height - 1)
+        max_corner[0] = np.clip(max_corner[0], 0, image_width - 1)
+        max_corner[1] = np.clip(max_corner[1], 0, image_height - 1)
+
+        points0 = [int(round(min_corner[0])), int(round(min_corner[1]))]
+        points1 = [int(round(max_corner[0])), int(round(max_corner[1]))]
+        if points0[0] >= points1[0] or points0[1] >= points1[1]:
+            return None
+        return points0, points1
+
     def sequence_warping(self, _value=False):
+        if not self.sequence_warping_enabled:
+            return
         index = self.imageList.index(self.filename)
         if index == 0:
             return 0
@@ -2442,10 +2661,14 @@ class MainWindow(QtWidgets.QMainWindow):
             pre_image = cv2.imdecode(np.fromfile(pre_image_name, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
             cur_image = cv2.imdecode(np.fromfile(self.filename, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
             image_height, image_width = cur_image.shape[:2]
+            H = None
             if self.check_Lucas_Kanade.isChecked():
                 H = optical_flow_Homography(pre_image, cur_image)
             if self.check_SIFT.isChecked():
                 H = SIFT_Homography(pre_image, cur_image)
+            if H is None:
+                logger.warning("Sequence warping skipped because homography estimation failed.")
+                return
             json_path = os.path.splitext(pre_image_name)[0] + '.json'
             polygon = []
             with open(json_path, 'r') as f:
@@ -2464,10 +2687,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     points0 = [int(center[0][0][0] - (label_w / 2)), int(center[0][0][1]) - (label_h / 2)]
                     points1 = [int(center[0][0][0] + (label_w / 2)), int(center[0][0][1]) + (label_h / 2)]
                 if self.check_edge.isChecked():
-                    points0 = cv2.perspectiveTransform(src_point0.reshape(-1, 1, 2), H).tolist()
-                    points1 = cv2.perspectiveTransform(src_point1.reshape(-1, 1, 2), H).tolist()
-                    points0 = [int(points0[0][0][0]), int(points0[0][0][1])]
-                    points1 = [int(points1[0][0][0]), int(points1[0][0][1])]
+                    warped_box = self._warp_bbox_with_homography(
+                        shape['points'], H, image_width, image_height
+                    )
+                    if warped_box is None:
+                        continue
+                    points0, points1 = warped_box
                 if 0 <= points0[0] < image_width and 0 <= points0[1] < image_height and 0 <= points1[
                     0] < image_width and 0 <= points1[1] < image_height:
                     # 确保坐标在图像范围内
@@ -2495,7 +2720,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.save_AI_Labels(label_file, polygon)
             self.loadFile(self.filename)
 
-    def object_detection_single(self, _value=False):
+    def object_detection_single(self, options=None, _value=False):
         image = labelme.utils.img_qt_to_arr(self.image)
         input_tensors = self.net.get_inputs()
         self.label_list = ast.literal_eval(self.net.get_modelmeta().custom_metadata_map['names'])  # 该 API 会返回列表
@@ -2515,19 +2740,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.save_AI_obb_labels(label_file, polygon)
         elif task == "detect":
             polygon = detect_postprocess(pred, self.object_conf_thres, ratio, image_width, image_height)
-            self.save_AI_Labels(label_file, polygon)
+            self.save_AI_Labels(
+                label_file,
+                polygon,
+                keep_existing=options["keep_existing_labels"] if options else None,
+            )
 
     def object_detection(self, _value=False):
-        if self.check_all_infer.isChecked():
-            start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
-            for i in range(start_index, len(self.imageList)):  # 打开下一个图像
-                self.object_detection_single()
-                self.openNextImg()
-        else:
-            self.object_detection_single()
-            self.loadFile(self.filename)
+        self.update_object_conf_threshold()
+        self._run_ai_annotation(
+            "object_detection",
+            self.object_detection_single,
+            reload_current=True,
+        )
 
-    def Text2Label_single(self, _value=False):
+    def Text2Label_single(self, options=None, _value=False):
         image = labelme.utils.img_qt_to_arr(self.image)
         if self.labelFile is not None:
             self.pre_shape = self.labelFile.shapes
@@ -2545,17 +2772,18 @@ class MainWindow(QtWidgets.QMainWindow):
         label_file = osp.splitext(self.imagePath)[0] + ".json"
         if self.output_dir:
             label_file = osp.join(self.output_dir, osp.basename(label_file))
-        self.save_AI_Labels(label_file, polygon)
+        self.save_AI_Labels(
+            label_file,
+            polygon,
+            keep_existing=options["keep_existing_labels"] if options else None,
+        )
         self.loadFile(self.filename)
 
     def Run_Text2Label(self, _value=False):
-        if self.check_all_infer.isChecked():
-            start_index = self.imageList.index(self.filename)  # 获取当前文件的位置
-            for i in range(start_index, len(self.imageList)):
-                self.Text2Label_single()
-                self.openNextImg()
-        else:
-            self.Text2Label_single()
+        self._run_ai_annotation(
+            "grounding_dino",
+            self.Text2Label_single,
+        )
 
     def Image_pass(self, _value=False):
         if not os.path.exists(self.lastOpenDir + '/image'):
@@ -2736,6 +2964,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.filename and load:
             self.loadFile(self.filename)
+            if self.sequence_warping_enabled:
+                self.sequence_warping()
 
         self._config["keep_prev"] = keep_prev
 
@@ -2789,6 +3019,7 @@ class MainWindow(QtWidgets.QMainWindow):
             % ("Change Annotations Dir", self.output_dir)
         )
         self.statusBar().show()
+        self._refreshDetectionPanelState()
 
         current_filename = self.filename
         self.importDirImages(self.lastOpenDir, load=False)
@@ -2851,6 +3082,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeFile(self, _value=False):
         if not self.mayContinue():
             return
+        self.closeObjectDetectionPanel()
+        self.closeSequenceWarpingPanel()
         self.resetState()
         self.setClean()
         self.toggleActions(False)
