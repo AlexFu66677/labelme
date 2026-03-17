@@ -80,9 +80,27 @@ class GroundDINO_B(SegmentAnythingModel):
     model_path = "./ai/seg_model/groundingdino_swinb_cogcoor_quant.onnx"
 
 
+class SAMText_A(SegmentAnythingModel):
+    name = "SAM3"
+    config_path = ""
+    model_path = "./ai/seg_model/sam3.pt"
+
+
 class GroundDINO_INIT(SegmentAnythingModel):
     name = "NULL"
     config_path = "",
+    model_path = ""
+
+
+class SAM3_A(SegmentAnythingModel):
+    name = "SAM3"
+    config_path = ""
+    model_path = "./ai/seg_model/sam3.pt"
+
+
+class SAM3_INIT(SegmentAnythingModel):
+    name = "NULL"
+    config_path = ""
     model_path = ""
 
 
@@ -96,6 +114,13 @@ MODELS = [
 Text2LabelMODELS = [
     GroundDINO_INIT,
     GroundDINO_A,
-    GroundDINO_B
+    GroundDINO_B,
+    SAMText_A,
+
+]
+
+VisualPromptMODELS = [
+    SAM3_A,
+    SAM3_INIT,
 
 ]

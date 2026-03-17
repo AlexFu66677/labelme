@@ -7,6 +7,7 @@ import math
 import os
 import os.path as osp
 import re
+import sys
 import webbrowser
 
 import shutil
@@ -37,6 +38,7 @@ from labelme import PY2
 from labelme import __appname__
 from labelme.ai import MODELS
 from labelme.ai import Text2LabelMODELS
+from labelme.ai import VisualPromptMODELS
 from labelme.ai import GroundingDINO
 from labelme.config import get_config
 from labelme.label_file import LabelFile
@@ -1045,18 +1047,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.object_detection_onnx_path.setReadOnly(True)
         self.object_detection_onnx_path.setPlaceholderText(self.tr("未选择目标检测模型"))
         self.object_detection_run_button = QtWidgets.QPushButton(
-            self.tr("开始目标检测"), self.object_detection_window
+            self.tr("开始"), self.object_detection_window
         )
         self.object_detection_run_button.clicked.connect(self.object_detection)
         self.object_detection_stop_button = QtWidgets.QPushButton(
-            self.tr("停止检测"), self.object_detection_window
+            self.tr("停止"), self.object_detection_window
         )
         self.object_detection_stop_button.clicked.connect(
             self.requestStopAiAnnotation
         )
         self.object_detection_stop_button.setEnabled(False)
         self.text2label_stop_button = QtWidgets.QPushButton(
-            self.tr("停止检测"), self.object_detection_window
+            self.tr("停止"), self.object_detection_window
         )
         self.text2label_stop_button.clicked.connect(
             self.requestStopAiAnnotation
@@ -1064,8 +1066,55 @@ class MainWindow(QtWidgets.QMainWindow):
         self.text2label_stop_button.setEnabled(False)
         self.check_all_infer_dino = QtWidgets.QCheckBox("处理全部图像", self.object_detection_window)
         self.check_save_existing_label_dino = QtWidgets.QCheckBox("保留已有标签", self.object_detection_window)
+        self.text2label_conf_thres = 0.3
+        self.text2label_conf_thres_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.text2label_conf_thres_text.setText(str(self.text2label_conf_thres))
+        self.text2label_conf_thres_text.setPlaceholderText("Conf(0-1)")
+        self.text2label_conf_thres_text.editingFinished.connect(self.update_text2label_conf_threshold)
+        self.text2label_imgsz_w = 1200
+        self.text2label_imgsz_h = 800
+        self.text2label_imgsz_w_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.text2label_imgsz_w_text.setText(str(self.text2label_imgsz_w))
+        self.text2label_imgsz_w_text.setPlaceholderText("宽")
+        self.text2label_imgsz_w_text.editingFinished.connect(self.update_text2label_imgsz)
+        self.text2label_imgsz_h_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.text2label_imgsz_h_text.setText(str(self.text2label_imgsz_h))
+        self.text2label_imgsz_h_text.setPlaceholderText("高")
+        self.text2label_imgsz_h_text.editingFinished.connect(self.update_text2label_imgsz)
+        self._selectAiVisualPromptModelComboBox = QtWidgets.QComboBox(self.object_detection_window)
+        self.sam3_label_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.sam3_conf_thres = 0.25
+        self.sam3_conf_thres_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.sam3_conf_thres_text.setText(str(self.sam3_conf_thres))
+        self.sam3_conf_thres_text.setPlaceholderText("Conf(0-1)")
+        self.sam3_conf_thres_text.editingFinished.connect(self.update_sam3_conf_threshold)
+        self.sam3_imgsz = 640
+        self.sam3_imgsz_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.sam3_imgsz_text.setText(str(self.sam3_imgsz))
+        self.sam3_imgsz_text.setPlaceholderText("图像尺寸")
+        self.sam3_imgsz_text.editingFinished.connect(self.update_sam3_imgsz)
+        self.sam3_single_target_check = QtWidgets.QCheckBox("仅标注单一目标", self.object_detection_window)
+        self.check_save_existing_label_sam3 = QtWidgets.QCheckBox("保留已有标签", self.object_detection_window)
+        self.sam3_run_button = QtWidgets.QPushButton("开始", self.object_detection_window)
+        self.sam3_run_button.clicked.connect(self.start_sam3_annotation)
+        self.sam3_pause_button = QtWidgets.QPushButton("停止", self.object_detection_window)
+        self.sam3_pause_button.clicked.connect(self.pause_sam3_annotation)
+        self.sam3_pause_button.setEnabled(False)
         self.ai_annotation_stop_requested = False
         self.ai_annotation_is_running = False
+        self.text2label_model_type = None
+        self.text2label_model_path = None
+        self.text2label_sam_predictor = None
+        self.text2label_sam_model_path = None
+        self.text2label_sam_imgsz = None
+        self.sam3_placeholder_config = {}
+        self.sam3_annotation_active = False
+        self.sam3_model_wrapper = None
+        self.sam3_predictor = None
+        self.sam3_semantic_predictor = None
+        self.sam3_model_wrapper_path = None
+        self.sam3_predictor_model_path = None
+        self.sam3_semantic_model_path = None
         self.ai_annotation_controls = {
             "object_detection": {
                 "run_all": self.check_all_infer,
@@ -1074,6 +1123,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "grounding_dino": {
                 "run_all": self.check_all_infer_dino,
                 "keep_existing": self.check_save_existing_label_dino,
+            },
+            "sam3": {
+                "keep_existing": self.check_save_existing_label_sam3,
             },
         }
 
@@ -1106,12 +1158,31 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.device
             )
         )
+        visual_prompt_model_names = [model.name for model in VisualPromptMODELS]
+        self._selectAiVisualPromptModelComboBox.addItems(visual_prompt_model_names)
+        visual_prompt_model_index = 0
+        self._selectAiVisualPromptModelComboBox.setCurrentIndex(visual_prompt_model_index)
+        self._selectAiVisualPromptModelComboBox.currentIndexChanged.connect(
+            lambda: self.init_sam3_model(
+                VisualPromptMODELS[
+                    visual_prompt_model_names.index(self._selectAiVisualPromptModelComboBox.currentText())
+                ].config_path,
+                VisualPromptMODELS[
+                    visual_prompt_model_names.index(self._selectAiVisualPromptModelComboBox.currentText())
+                ].model_path,
+                self.device,
+            )
+        )
         self.Text2Label_Text = QtWidgets.QLineEdit(self)
-        self.Text2Label_detect_button = QtWidgets.QPushButton("Grounding DINO 检测", self)
+        self.Text2Label_detect_button = QtWidgets.QPushButton("开始", self)
         self.Text2Label_Text.setAlignment(QtCore.Qt.AlignCenter)
         self.Text2Label_detect_button.clicked.connect(self.Run_Text2Label)
         Text2Label_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcuts["Text2Label"]), self)
         Text2Label_shortcut.activated.connect(self.Text2Label_detect_button.click)
+        self.sam3_toggle_shortcut = QtWidgets.QShortcut(
+            QtGui.QKeySequence(shortcuts["visual_prompt_toggle"]), self
+        )
+        self.sam3_toggle_shortcut.activated.connect(self.toggle_sam3_annotation_shortcut)
         model_names = [model.name for model in MODELS]
         self._selectAiModelComboBox.addItems(model_names)
         if self._config["ai"]["default"] in model_names:
@@ -1155,25 +1226,73 @@ class MainWindow(QtWidgets.QMainWindow):
         model_layout.addLayout(object_conf_layout)
         model_layout.addWidget(self.check_all_infer)
         model_layout.addWidget(self.check_save_existing_label)
-        model_layout.addWidget(self.object_detection_run_button)
-        model_layout.addWidget(self.object_detection_stop_button)
+        object_detection_button_layout = QtWidgets.QHBoxLayout()
+        object_detection_button_layout.addWidget(self.object_detection_run_button)
+        object_detection_button_layout.addWidget(self.object_detection_stop_button)
+        model_layout.addLayout(object_detection_button_layout)
         model_group.setLayout(model_layout)
         detection_panel_layout.addWidget(model_group)
 
-        dino_group = QtWidgets.QGroupBox(self.tr("Grounding DINO"), self.object_detection_window)
+        dino_group = QtWidgets.QGroupBox(self.tr("文本提示"), self.object_detection_window)
         dino_layout = QtWidgets.QVBoxLayout()
         dino_layout.setSpacing(6)
         self.Text2Label_Text.setPlaceholderText(self.tr("输入文本提示，例如 car.person"))
+        self.text2label_conf_thres_text.setFixedWidth(80)
+        self.text2label_imgsz_w_text.setFixedWidth(80)
+        self.text2label_imgsz_h_text.setFixedWidth(80)
+        dino_conf_layout = QtWidgets.QHBoxLayout()
+        dino_conf_layout.addWidget(QtWidgets.QLabel("置信度阈值", self.object_detection_window))
+        dino_conf_layout.addWidget(self.text2label_conf_thres_text)
+        dino_imgsz_layout = QtWidgets.QHBoxLayout()
+        dino_imgsz_layout.addWidget(QtWidgets.QLabel("图像尺寸", self.object_detection_window))
+        dino_imgsz_layout.addWidget(QtWidgets.QLabel("长", self.object_detection_window))
+        dino_imgsz_layout.addWidget(self.text2label_imgsz_w_text)
+        dino_imgsz_layout.addWidget(QtWidgets.QLabel("宽", self.object_detection_window))
+        dino_imgsz_layout.addWidget(self.text2label_imgsz_h_text)
         dino_layout.addWidget(self._selectAiText2LabelModelComboBox)
         dino_layout.addWidget(self.Text2Label_Text)
+        dino_layout.addLayout(dino_conf_layout)
+        dino_layout.addLayout(dino_imgsz_layout)
         dino_layout.addWidget(self.check_all_infer_dino)
         dino_layout.addWidget(self.check_save_existing_label_dino)
-        dino_layout.addWidget(self.Text2Label_detect_button)
-        dino_layout.addWidget(self.text2label_stop_button)
+        dino_button_layout = QtWidgets.QHBoxLayout()
+        dino_button_layout.addWidget(self.Text2Label_detect_button)
+        dino_button_layout.addWidget(self.text2label_stop_button)
+        dino_layout.addLayout(dino_button_layout)
         dino_group.setLayout(dino_layout)
         detection_panel_layout.addWidget(dino_group)
+
+        sam3_group = QtWidgets.QGroupBox(self.tr("视觉提示"), self.object_detection_window)
+        sam3_layout = QtWidgets.QVBoxLayout()
+        sam3_layout.setSpacing(6)
+        self.sam3_label_text.setPlaceholderText(self.tr("设置标签名，检测结果统一使用该标签"))
+        self.sam3_conf_thres_text.setFixedWidth(80)
+        self.sam3_imgsz_text.setFixedWidth(80)
+        sam3_conf_layout = QtWidgets.QHBoxLayout()
+        sam3_conf_layout.addWidget(QtWidgets.QLabel("置信度阈值", self.object_detection_window))
+        sam3_conf_layout.addWidget(self.sam3_conf_thres_text)
+        sam3_imgsz_layout = QtWidgets.QHBoxLayout()
+        sam3_imgsz_layout.addWidget(QtWidgets.QLabel("图像尺寸", self.object_detection_window))
+        sam3_imgsz_layout.addWidget(self.sam3_imgsz_text)
+        sam3_layout.addWidget(self._selectAiVisualPromptModelComboBox)
+        sam3_layout.addWidget(self.sam3_label_text)
+        sam3_layout.addLayout(sam3_conf_layout)
+        sam3_layout.addLayout(sam3_imgsz_layout)
+        sam3_layout.addWidget(self.sam3_single_target_check)
+        sam3_layout.addWidget(self.check_save_existing_label_sam3)
+        sam3_button_layout = QtWidgets.QHBoxLayout()
+        sam3_button_layout.addWidget(self.sam3_run_button)
+        sam3_button_layout.addWidget(self.sam3_pause_button)
+        sam3_layout.addLayout(sam3_button_layout)
+        sam3_group.setLayout(sam3_layout)
+        detection_panel_layout.addWidget(sam3_group)
         detection_panel_layout.addStretch()
         self.object_detection_window.setLayout(detection_panel_layout)
+        self.init_sam3_model(
+            VisualPromptMODELS[visual_prompt_model_index].config_path,
+            VisualPromptMODELS[visual_prompt_model_index].model_path,
+            self.device,
+        )
         self._refreshDetectionPanelState()
 
         self.tools = self.toolbar("Tools")
@@ -1477,6 +1596,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "ai_mask": self.actions.createAiMaskMode,
         }
         self.actions.rotate.setEnabled(False)
+        if edit or createMode != "rectangle":
+            self.sam3_annotation_active = False
         self.canvas.setEditing(edit)
         self.canvas.createMode = createMode
         if edit:
@@ -2056,6 +2177,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         position MUST be in global coordinates.
         """
+        if (
+            self.sam3_annotation_active
+            and self.canvas.createMode == "rectangle"
+            and self.canvas.shapes
+            and self.canvas.shapes[-1].shape_type == "rectangle"
+        ):
+            prompt_shape = self.canvas.shapes[-1]
+            prompt_box = self._get_prompt_box_from_shape(prompt_shape)
+            try:
+                self._run_sam3_box_detection(prompt_box)
+            except Exception as e:
+                self.loadFile(self.filename)
+                self.errorMessage(
+                    self.tr("SAM3 推理失败"),
+                    self.tr("{}").format(e),
+                )
+            return
+
         items = self.uniqLabelList.selectedItems()
         text = None
         if items:
@@ -2449,18 +2588,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refreshDetectionPanelState()
         self.actions.rotate.setEnabled(False)
 
+    def init_sam3_model(self, config_path, model_path, device, _value=False):
+        self.sam3_model_file = model_path
+        self.sam3_model_wrapper = None
+        self.sam3_predictor = None
+        self.sam3_semantic_predictor = None
+        self.sam3_model_wrapper_path = None
+        self.sam3_predictor_model_path = None
+        self.sam3_semantic_model_path = None
+        self._refreshDetectionPanelState()
+        return True
+
     def init_text2lable_model(self, config_path, model_path, device, _value=False):
         if not model_path:
-            self.errorMessage(
-                self.tr("Invalid model_path"),
-                self.tr("Invalid model_path '{}'").format(
-                    model_path
-                ),
-            )
+            self.text2label_model = None
+            self.text2label_model_type = None
+            self.text2label_model_path = None
+            self.text2label_sam_predictor = None
+            self.text2label_sam_model_path = None
+            self.text2label_sam_imgsz = None
+            self._refreshDetectionPanelState()
             return False
-        self.text2label_model = GroundingDINO(model_path, 0.3, "./ai/seg_model/vocab.txt", device, 0.25)
+        self.text2label_model_path = model_path
+        self.text2label_sam_predictor = None
+        self.text2label_sam_model_path = None
+        self.text2label_sam_imgsz = None
+        if model_path.lower().endswith(".onnx"):
+            self.text2label_model = GroundingDINO(
+                model_path,
+                self.text2label_conf_thres,
+                "./ai/seg_model/vocab.txt",
+                device,
+                0.1,
+            )
+            self.text2label_model.size = [self.text2label_imgsz_w, self.text2label_imgsz_h]
+            self.text2label_model_type = "grounding_dino"
+        else:
+            self.text2label_model = None
+            self.text2label_model_type = "sam3_text"
         self.actions.rotate.setEnabled(False)
-        return self.text2label_model
+        self._refreshDetectionPanelState()
+        return self.text2label_model if self.text2label_model is not None else True
+
+    def _text2label_model_ready(self):
+        if self.text2label_model_type == "grounding_dino":
+            return self.text2label_model is not None
+        if self.text2label_model_type == "sam3_text":
+            return bool(self.text2label_model_path)
+        return False
 
     def _refreshDetectionPanelState(self):
         if hasattr(self, "object_detection_onnx_path"):
@@ -2469,11 +2644,55 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         if hasattr(self, "object_detection_run_button"):
             self.object_detection_run_button.setEnabled(bool(getattr(self, "net", None)))
+        if hasattr(self, "sam3_run_button"):
+            self.sam3_run_button.setEnabled(bool(getattr(self, "sam3_model_file", None)))
+        if hasattr(self, "Text2Label_detect_button"):
+            self.Text2Label_detect_button.setEnabled(self._text2label_model_ready())
+        self._updateSam3PanelState()
+
+    def _updateSam3PanelState(self, _value=None):
+        if not hasattr(self, "sam3_run_button"):
+            return
+        self.sam3_run_button.setEnabled(bool(getattr(self, "sam3_model_file", None)) and not self.ai_annotation_is_running)
+        if hasattr(self, "sam3_pause_button"):
+            self.sam3_pause_button.setEnabled(self.sam3_annotation_active and not self.ai_annotation_is_running)
+
+    def _parse_sam_text_prompts(self, raw_text):
+        prompts = [part.strip() for part in re.split(r"[\n,.;，。；]+", raw_text or "") if part.strip()]
+        return prompts
+
+    def _ensure_text2label_sam_predictor(self):
+        _, SAM3SemanticPredictor = self._import_sam3_modules()
+        model_path = getattr(self, "text2label_model_path", None)
+        requested_imgsz = self.text2label_imgsz_w
+        overrides = dict(
+            conf=self.text2label_conf_thres,
+            iou=0.7,
+            task="segment",
+            mode="predict",
+            model=model_path,
+            device=self.device,
+            verbose=False,
+            imgsz=requested_imgsz,
+            half=self.device == "cuda",
+            compile=False,
+            save=False,
+        )
+        if (
+            self.text2label_sam_predictor is None
+            or self.text2label_sam_model_path != model_path
+            or self.text2label_sam_imgsz != requested_imgsz
+        ):
+            print("init")
+            self.text2label_sam_predictor = SAM3SemanticPredictor(overrides=overrides)
+            self.text2label_sam_model_path = model_path
+            self.text2label_sam_imgsz = requested_imgsz
+        return self.text2label_sam_predictor
 
     def _get_ai_annotation_options(self, algorithm_name):
         controls = self.ai_annotation_controls[algorithm_name]
         return {
-            "run_all_images": controls["run_all"].isChecked(),
+            "run_all_images": controls["run_all"].isChecked() if "run_all" in controls else False,
             "keep_existing_labels": controls["keep_existing"].isChecked(),
         }
 
@@ -2484,7 +2703,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.object_detection_run_button.setEnabled(
             bool(getattr(self, "net", None)) and not running
         )
-        self.Text2Label_detect_button.setEnabled(not running)
+        self.Text2Label_detect_button.setEnabled(self._text2label_model_ready() and not running)
+        self.sam3_run_button.setEnabled(
+            bool(getattr(self, "sam3_model_file", None)) and not running
+        )
 
     def requestStopAiAnnotation(self):
         if self.ai_annotation_is_running:
@@ -2526,6 +2748,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def onObjectDetectionWindowClosed(self):
         self.object_detection_enabled = False
+        self.sam3_annotation_active = False
+        if hasattr(self, "_selectAiText2LabelModelComboBox"):
+            self._selectAiText2LabelModelComboBox.setCurrentIndex(0)
+        self.text2label_model = None
+        self.text2label_model_type = None
+        self.text2label_model_path = None
+        self.text2label_sam_predictor = None
+        self.text2label_sam_model_path = None
+        self.text2label_sam_imgsz = None
+        self.sam3_model_wrapper = None
+        self.sam3_predictor = None
+        self.sam3_semantic_predictor = None
+        self.sam3_model_wrapper_path = None
+        self.sam3_predictor_model_path = None
+        self.sam3_semantic_model_path = None
         self.actions.object.setChecked(False)
 
     def closeObjectDetectionPanel(self):
@@ -2533,6 +2770,195 @@ class MainWindow(QtWidgets.QMainWindow):
             self.object_detection_window.close()
         else:
             self.onObjectDetectionWindowClosed()
+
+    def get_sam3_annotation_options(self):
+        options = self._get_ai_annotation_options("sam3")
+        options.update(
+            {
+                "model_path": getattr(self, "sam3_model_file", ""),
+                "annotation_mode": "目标检测",
+                "prompt_mode": "方框提示",
+                "single_target_only": self.sam3_single_target_check.isChecked(),
+                "label_text": self.sam3_label_text.text().strip(),
+                "imgsz": self.sam3_imgsz,
+            }
+        )
+        return options
+
+    def _import_sam3_modules(self):
+        vendor_root = osp.dirname(__file__)
+        if vendor_root not in sys.path:
+            sys.path.insert(0, vendor_root)
+        from ultralytics import SAM
+        from ultralytics.models.sam import SAM3SemanticPredictor
+
+        return SAM, SAM3SemanticPredictor
+
+    def _get_default_sam3_label(self, single_target_only):
+        custom_label = self.sam3_label_text.text().strip()
+        if custom_label:
+            return custom_label
+        items = self.uniqLabelList.selectedItems()
+        if items:
+            selected = items[0].data(Qt.UserRole)
+            if selected:
+                return selected
+        return "sam3_object" if single_target_only else "sam3_concept"
+
+    def _ensure_sam3_predictor(self, single_target_only):
+        SAM, SAM3SemanticPredictor = self._import_sam3_modules()
+        model_path = getattr(self, "sam3_model_file", None)
+        overrides = dict(
+            conf=self.sam3_conf_thres,
+            iou=0.7,
+            task="segment",
+            mode="predict",
+            model=model_path,
+            device=self.device,
+            verbose=False,
+            imgsz=self.sam3_imgsz,
+            half=self.device == "cuda",
+            compile=False,
+            save=False,
+        )
+        if single_target_only:
+            if self.sam3_model_wrapper is None or self.sam3_model_wrapper_path != model_path:
+                self.sam3_model_wrapper = SAM(model_path)
+                self.sam3_model_wrapper_path = model_path
+            return self.sam3_model_wrapper
+        if self.sam3_semantic_predictor is None or self.sam3_semantic_model_path != model_path:
+            self.sam3_semantic_predictor = SAM3SemanticPredictor(overrides=overrides)
+            self.sam3_semantic_model_path = model_path
+        return self.sam3_semantic_predictor
+
+    def _sam3_boxes_to_ai_labels(self, result, default_label, prefer_masks=False, label_suffix=""):
+        labels = []
+        if result is None:
+            return labels
+        boxes = []
+        classes = []
+        scores = []
+        if prefer_masks and result.masks is not None and len(result.masks) > 0:
+            mask_data = result.masks.data.cpu().numpy()
+            box_classes = (
+                result.boxes.cls.cpu().numpy().astype(int)
+                if result.boxes is not None and result.boxes.cls is not None
+                else np.zeros(len(mask_data), dtype=int)
+            )
+            box_scores = (
+                result.boxes.conf.cpu().numpy()
+                if result.boxes is not None and result.boxes.conf is not None
+                else np.ones(len(mask_data))
+            )
+            for i, mask in enumerate(mask_data):
+                ys, xs = np.where(mask)
+                if len(xs) == 0 or len(ys) == 0:
+                    continue
+                boxes.append([float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())])
+                classes.append(int(box_classes[i]) if i < len(box_classes) else 0)
+                scores.append(float(box_scores[i]) if i < len(box_scores) else 1.0)
+        elif result.boxes is not None and len(result.boxes) > 0:
+            boxes = result.boxes.xyxy.cpu().numpy().tolist()
+            classes = result.boxes.cls.cpu().numpy().astype(int).tolist()
+            scores = (
+                result.boxes.conf.cpu().numpy().tolist()
+                if result.boxes.conf is not None
+                else [1.0] * len(boxes)
+            )
+        if not boxes:
+            return labels
+        for box, cls_idx, score in zip(boxes, classes, scores):
+            x1, y1, x2, y2 = [int(round(v)) for v in box]
+            label_name = result.names.get(cls_idx, default_label) if isinstance(result.names, dict) else default_label
+            if not label_name or str(label_name).isdigit() or label_name == "visual":
+                label_name = default_label
+            if label_suffix:
+                label_name = "{}{}".format(label_name, label_suffix)
+            labels.append(
+                [
+                    label_name,
+                    [x1, y1],
+                    [x2, y2],
+                    float(score),
+                ]
+            )
+        return labels
+
+    def _run_sam3_box_detection(self, prompt_box):
+        options = self.get_sam3_annotation_options()
+        default_label = self._get_default_sam3_label(options["single_target_only"])
+        image = cv2.imdecode(np.fromfile(self.filename, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise RuntimeError("无法读取当前图像")
+        predictor = self._ensure_sam3_predictor(options["single_target_only"])
+        if options["single_target_only"]:
+            results = predictor.predict(
+                source=image,
+                bboxes=prompt_box,
+                conf=self.sam3_conf_thres,
+                iou=0.7,
+                imgsz=options["imgsz"],
+                device=self.device,
+                verbose=False,
+                compile=False,
+            )
+        else:
+            predictor.args.imgsz = self.sam3_imgsz
+            predictor.args.conf = self.sam3_conf_thres
+            predictor.set_image(image)
+            results = predictor(bboxes=[prompt_box])
+        result = results[0] if results else None
+        if options["single_target_only"]:
+            labels = self._sam3_boxes_to_ai_labels(
+                result,
+                default_label,
+                prefer_masks=False,
+            )
+        else:
+            labels = self._sam3_boxes_to_ai_labels(
+                result,
+                default_label,
+                prefer_masks=True,
+            )
+        if options["single_target_only"] and labels:
+            labels = [max(labels, key=lambda item: item[-1])]
+        labels = [item[:-1] for item in labels]
+        label_file = osp.splitext(self.imagePath)[0] + ".json"
+        if self.output_dir:
+            label_file = osp.join(self.output_dir, osp.basename(label_file))
+        self.save_AI_Labels(label_file, labels, keep_existing=options["keep_existing_labels"])
+        self.loadFile(self.filename)
+
+    def _get_prompt_box_from_shape(self, shape):
+        xs = [point.x() for point in shape.points[:2]]
+        ys = [point.y() for point in shape.points[:2]]
+        x1, x2 = sorted(xs)
+        y1, y2 = sorted(ys)
+        return [float(x1), float(y1), float(x2), float(y2)]
+
+    def start_sam3_annotation(self, _value=False):
+        self.update_sam3_conf_threshold()
+        options = self.get_sam3_annotation_options()
+        self.sam3_placeholder_config = options
+        if not options["model_path"]:
+            self.errorMessage(self.tr("未选择模型"), self.tr("请先选择 SAM3 模型文件。"))
+            return
+        self.sam3_annotation_active = True
+        self.toggleDrawMode(False, createMode="rectangle")
+        self._updateSam3PanelState()
+        self.status(self.tr("SAM3 方框提示已开启：请在图像上绘制一个矩形提示框。"))
+
+    def toggle_sam3_annotation_shortcut(self):
+        if self.sam3_annotation_active:
+            self.pause_sam3_annotation()
+        else:
+            self.start_sam3_annotation()
+
+    def pause_sam3_annotation(self, _value=False):
+        self.sam3_annotation_active = False
+        self.setEditMode()
+        self._updateSam3PanelState()
+        self.status(self.tr("SAM3 已暂停：现在可以手动调整标注或补标目标。"))
 
     def toggleSequenceWarpingPanel(self, checked=False):
         self.sequence_warping_enabled = checked
@@ -2589,6 +3015,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self.object_conf_thres = float(self.object_conf_thres_text.text())
         except ValueError:
             print("Invalid input for Object Confidence Threshold")
+
+    def update_text2label_conf_threshold(self):
+        try:
+            self.text2label_conf_thres = float(self.text2label_conf_thres_text.text())
+            if self.text2label_model_type == "grounding_dino" and self.text2label_model is not None:
+                self.text2label_model.box_threshold = self.text2label_conf_thres
+        except ValueError:
+            print("Invalid input for Text2Label Confidence Threshold")
+
+    def update_text2label_imgsz(self):
+        try:
+            new_w = int(self.text2label_imgsz_w_text.text())
+            new_h = int(self.text2label_imgsz_h_text.text())
+            size_changed = (new_w != self.text2label_imgsz_w) or (new_h != self.text2label_imgsz_h)
+            self.text2label_imgsz_w = new_w
+            self.text2label_imgsz_h = new_h
+            if self.text2label_model_type == "grounding_dino" and self.text2label_model is not None:
+                self.text2label_model.size = [self.text2label_imgsz_w, self.text2label_imgsz_h]
+            elif self.text2label_model_type == "sam3_text" and size_changed:
+                self.text2label_sam_predictor = None
+                self.text2label_sam_model_path = None
+                self.text2label_sam_imgsz = None
+        except ValueError:
+            print("Invalid input for Text2Label Image Size")
+
+    def update_sam3_conf_threshold(self):
+        try:
+            self.sam3_conf_thres = float(self.sam3_conf_thres_text.text())
+        except ValueError:
+            print("Invalid input for SAM3 Confidence Threshold")
+
+    def update_sam3_imgsz(self):
+        try:
+            self.sam3_imgsz = int(self.sam3_imgsz_text.text())
+        except ValueError:
+            print("Invalid input for SAM3 Image Size")
 
     def _limit_sequence_warping_images(self, pre_image, cur_image):
         max_side = max(
@@ -2758,17 +3220,72 @@ class MainWindow(QtWidgets.QMainWindow):
         image = labelme.utils.img_qt_to_arr(self.image)
         if self.labelFile is not None:
             self.pre_shape = self.labelFile.shapes
-        if image.shape[-1] == 1:
+        if image.ndim == 3 and image.shape[-1] > 3:
+            image = image[:, :, :3]
+        if image.ndim == 4 and image.shape[-1] == 1:
             image = np.squeeze(image, axis=-1)
-        boxes_filt, pred_phrases = self.text2label_model.detect(image, self.Text2Label_Text.text())
-        H, W = image.shape[0], image.shape[1]
         polygon = []
-        for box, label in zip(boxes_filt, pred_phrases):
-            box = box * np.array([W, H, W, H])
-            box[:2] -= box[2:] / 2
-            box[2:] += box[:2]
-            x0, y0, x1, y1 = box
-            polygon.append([label, [int(x0), int(y0)], [int(x1), int(y1)]])
+        if self.text2label_model_type == "sam3_text":
+            prompts = self._parse_sam_text_prompts(self.Text2Label_Text.text())
+            if not prompts:
+                self.errorMessage(
+                    self.tr("无效文本提示"),
+                    self.tr("请输入至少一个文本提示，例如 car.person。"),
+                )
+                return
+            self.update_text2label_conf_threshold()
+            self.update_text2label_imgsz()
+            if self.text2label_imgsz_w != self.text2label_imgsz_h:
+                self.errorMessage(
+                    self.tr("无效图像尺寸"),
+                    self.tr("SAM3 文本提示模型要求图像尺寸为方形，请将宽和高设置为相同值。"),
+                )
+                return
+            
+            predictor = self._ensure_text2label_sam_predictor()
+            predictor.args.conf = self.text2label_conf_thres
+            predictor.set_image(image)
+            results = predictor(text=prompts)
+            result = results[0] if results else None
+            if result is not None:
+                if result.masks is not None and len(result.masks) > 0:
+                    mask_data = result.masks.data.cpu().numpy()
+                    classes = (
+                        result.boxes.cls.cpu().numpy().astype(int).tolist()
+                        if result.boxes is not None and result.boxes.cls is not None
+                        else [0] * len(mask_data)
+                    )
+                    for i, mask in enumerate(mask_data):
+                        ys, xs = np.where(mask)
+                        if len(xs) == 0 or len(ys) == 0:
+                            continue
+                        x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+                        cls_idx = classes[i] if i < len(classes) else 0
+                        label = prompts[cls_idx] if 0 <= cls_idx < len(prompts) else prompts[0]
+                        polygon.append([label, [x0, y0], [x1, y1]])
+                elif result.boxes is not None and len(result.boxes) > 0:
+                    boxes = result.boxes.xyxy.cpu().numpy().tolist()
+                    classes = result.boxes.cls.cpu().numpy().astype(int).tolist()
+                    for box, cls_idx in zip(boxes, classes):
+                        x0, y0, x1, y1 = box
+                        label = prompts[cls_idx] if 0 <= cls_idx < len(prompts) else prompts[0]
+                        polygon.append([label, [int(x0), int(y0)], [int(x1), int(y1)]])
+        else:
+            self.update_text2label_conf_threshold()
+            self.update_text2label_imgsz()
+            boxes_filt, pred_phrases = self.text2label_model.detect(
+                image,
+                self.Text2Label_Text.text(),
+                size=[self.text2label_imgsz_w, self.text2label_imgsz_h],
+                box_threshold=self.text2label_conf_thres,
+            )
+            H, W = image.shape[0], image.shape[1]
+            for box, label in zip(boxes_filt, pred_phrases):
+                box = box * np.array([W, H, W, H])
+                box[:2] -= box[2:] / 2
+                box[2:] += box[:2]
+                x0, y0, x1, y1 = box
+                polygon.append([label, [int(x0), int(y0)], [int(x1), int(y1)]])
         label_file = osp.splitext(self.imagePath)[0] + ".json"
         if self.output_dir:
             label_file = osp.join(self.output_dir, osp.basename(label_file))
@@ -2780,6 +3297,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.loadFile(self.filename)
 
     def Run_Text2Label(self, _value=False):
+        if not self._text2label_model_ready():
+            self.errorMessage(
+                self.tr("未加载模型"),
+                self.tr("请先在文本提示中选择并加载模型。"),
+            )
+            return
         self._run_ai_annotation(
             "grounding_dino",
             self.Text2Label_single,

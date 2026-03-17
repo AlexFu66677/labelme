@@ -85,13 +85,13 @@ canvas:
 
 shortcuts:
   #关闭
-  close: Ctrl+Shift+W
+  close: null
   #打开
-  open: Ctrl+O
+  open: null
   #打开文件夹
-  open_dir: Ctrl+U
+  open_dir: null
   #退出
-  quit: Ctrl+Q
+  quit: null
   #保存
   save: Ctrl+S
   #保存名称选择
@@ -176,6 +176,7 @@ shortcuts:
   #文字提示检测
   Text2Label: null
   #视频切分图像
+  visual_prompt_toggle: Q
   video_slice: null
   #数据增强
   data_augmentation: null

@@ -2,23 +2,6 @@ import argparse
 import cv2
 import numpy as np
 import onnxruntime
-# from .clip_tokenizer import tokenize, FullTokenizer, generate_masks_with_special_tokens_and_transfer_map
-
-# coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 
 """Tokenization classes."""
 import collections
@@ -535,7 +518,6 @@ def get_phrases_from_posmap(posmap, input_ids, tokenizer, left_idx=0, right_idx=
         if len(non_zero_idx) > 0:
             token_ids = [input_ids[i] for i in non_zero_idx]
             return tokenizer.convert_ids_to_tokens(token_ids)[0]
-            ##return ' '.join(tokenizer.convert_ids_to_tokens(token_ids))  ###原始是返回一段描述的,如果只是检测目标,可以只返回一个单词
         else:
             return None
     else:
@@ -574,8 +556,10 @@ class GroundingDINO():
         self.specical_texts = ["[CLS]", "[SEP]", ".", "?"]
         self.tokenizer = FullTokenizer(vocab_file=vocab_path)
 
-    def detect(self, srcimg, text_prompt):
-        rescaled_image = resize_image(srcimg, self.size, max_size=self.max_size)
+    def detect(self, srcimg, text_prompt, size=None, box_threshold=None):
+        infer_size = size if size is not None else self.size
+        infer_box_threshold = self.box_threshold if box_threshold is None else box_threshold
+        rescaled_image = resize_image(srcimg, infer_size, max_size=self.max_size)
         img = (rescaled_image.astype(np.float32) / 255.0 - self.mean_) / self.std_
         inputs = {"img": np.expand_dims(np.transpose(img, (2, 0, 1)), axis=0).astype(np.float32)}
         import time
@@ -604,9 +588,9 @@ class GroundingDINO():
         inputs["token_type_ids"] = token_type_ids
         inputs["position_ids"] = position_ids
         inputs["text_token_mask"] = text_self_attention_masks
-        end_time = time.perf_counter()  # 高精度结束计时
-        elapsed_ms = (end_time - start_time) * 1000  # 转换为毫秒
-        print(f"文本预处理耗时: {elapsed_ms:.3f} 毫秒")
+        # end_time = time.perf_counter()  # 高精度结束计时
+        # elapsed_ms = (end_time - start_time) * 1000  # 转换为毫秒
+        # print(f"文本预处理耗时: {elapsed_ms:.3f} 毫秒")
         outputs = self.net.run(self.output_names, inputs)
 
         prediction_logits_ = np.squeeze(outputs[0], axis=0)  # [0]  # prediction_logits.shape = (nq, 256)
@@ -614,7 +598,7 @@ class GroundingDINO():
 
         prediction_boxes_ = np.squeeze(outputs[1], axis=0)  # [0]  # prediction_boxes.shape = (nq, 4)
 
-        filt_mask = np.max(prediction_logits_, axis=1) > self.box_threshold
+        filt_mask = np.max(prediction_logits_, axis=1) > infer_box_threshold
         logits_filt = prediction_logits_[filt_mask]  # num_filt, 256
         boxes_filt = prediction_boxes_[filt_mask]  # num_filt, 4
 
@@ -624,9 +608,9 @@ class GroundingDINO():
             if pred_phrase is None:
                 continue
             pred_phrases.append(pred_phrase)
-        end_time1 = time.perf_counter()  # 高精度结束计时
-        elapsed_ms1 = (end_time1 - end_time) * 1000  # 转换为毫秒
-        print(f"推理处理耗时: {elapsed_ms1:.3f} 毫秒")
+        # end_time1 = time.perf_counter()  # 高精度结束计时
+        # elapsed_ms1 = (end_time1 - end_time) * 1000  # 转换为毫秒
+        # print(f"推理处理耗时: {elapsed_ms1:.3f} 毫秒")
         return boxes_filt, pred_phrases
 
 
