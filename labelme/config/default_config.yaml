@@ -99,11 +99,13 @@ shortcuts:
   #保存地址选择
   save_to: null
   #json文件删除
-  delete_file: Ctrl+Delete
+  delete_file: Delete
   #onnx模型选择
   select_onnx: null
   #目标检测
-  object: [W, Ctrl+W]
+  object: Ctrl+W
+  # 目标检测窗口打开且已加载 ONNX 模型时执行推理
+  object_detection_infer: W
   #标注映射
   sequence_warping: null #标注映射
   #旋转

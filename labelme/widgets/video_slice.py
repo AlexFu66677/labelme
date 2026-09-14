@@ -99,7 +99,7 @@ class Video_slice_Dialog(QtWidgets.QDialog):
     def select_video_file(self):
         file_dialog = QtWidgets.QFileDialog()
         file_dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
-        file_dialog.setNameFilter('Video files (*.mp4 *.avi *.mov *.mkv *.flv *.h265 *.H265);;All files (*.*)')
+        file_dialog.setNameFilter('Video files (*.mp4 *.avi *.mov *.mkv *.flv *.h265 *.H265 *.h264);;All files (*.*)')
         if file_dialog.exec_():
             file_path = file_dialog.selectedFiles()
             self.video_input.setText(file_path[0])

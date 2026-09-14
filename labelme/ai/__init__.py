@@ -80,9 +80,15 @@ class GroundDINO_B(SegmentAnythingModel):
     model_path = "./ai/seg_model/groundingdino_swinb_cogcoor_quant.onnx"
 
 
-class SAMText_A(SegmentAnythingModel):
-    name = "SAM3"
-    config_path = ""
+class SAMTextSpeed(SegmentAnythingModel):
+    name = "SAM3(speed)"
+    config_path = "speed"
+    model_path = "./ai/seg_model/sam3.pt"
+
+
+class SAMTextAccuracy(SegmentAnythingModel):
+    name = "SAM3(accuracy)"
+    config_path = "accuracy"
     model_path = "./ai/seg_model/sam3.pt"
 
 
@@ -115,7 +121,8 @@ Text2LabelMODELS = [
     GroundDINO_INIT,
     GroundDINO_A,
     GroundDINO_B,
-    SAMText_A,
+    SAMTextSpeed,
+    SAMTextAccuracy,
 
 ]
 

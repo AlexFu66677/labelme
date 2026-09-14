@@ -39,7 +39,6 @@ jiter==0.13.0
 json_repair==0.58.5
 jsonlines==4.0.0
 kiwisolver==1.5.0
-labelme==5.11.4
 lapx==0.9.4
 lazy-loader==0.5
 loguru==0.7.3
@@ -55,12 +54,11 @@ natsort==8.4.0
 networkx==3.4.2
 numpy==1.26.4
 onnx==1.20.1
-onnxruntime==1.23.2
 onnxruntime-gpu==1.23.2
 openai==2.28.0
 opencv-contrib-python-headless==4.11.0.86
 opencv-python==4.9.0.80
-osam==0.3.1
+osam==0.2.2
 pandas==2.3.3
 pillow==12.1.1
 polars==1.39.0
@@ -117,5 +115,4 @@ ultralytics-thop==2.0.18
 urllib3==2.6.3
 uv==0.10.10
 wcwidth==0.6.0
-win32_setctime==1.2.0
 zipp==3.23.0

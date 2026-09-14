@@ -1,6 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 
 import functools
+import copy
 import html
 import ast
 import math
@@ -40,6 +41,8 @@ from labelme.ai import MODELS
 from labelme.ai import Text2LabelMODELS
 from labelme.ai import VisualPromptMODELS
 from labelme.ai import GroundingDINO
+from labelme.ai.tracking import track_boxes_csrt
+from labelme.ai.tracking import track_boxes_template_matching
 from labelme.config import get_config
 from labelme.label_file import LabelFile
 from labelme.label_file import LabelFileError
@@ -52,6 +55,7 @@ from labelme.widgets import LabelDialog
 from labelme.widgets import LabelListWidget
 from labelme.widgets import LabelListWidgetItem
 from labelme.widgets import ObjectDetectionWindow
+from labelme.widgets import TrackingPredictionWindow
 from labelme.widgets import SequenceWarpingWindow
 from labelme.widgets import ToolBar
 from labelme.widgets import UniqueLabelQListWidget
@@ -77,6 +81,103 @@ from . import utils
 
 LABEL_COLORMAP = imgviz.label_colormap()
 SEQUENCE_WARPING_MAX_SIDE = 1280
+
+
+class FileListItemDelegate(QtWidgets.QStyledItemDelegate):
+    """Paint a lightweight delete button without creating a widget per row."""
+
+    deleteClicked = QtCore.Signal(object)
+    _button_width = 24
+    _margin = 4
+
+    def _buttonRect(self, option):
+        return QtCore.QRect(
+            option.rect.right() - self._button_width - self._margin + 1,
+            option.rect.top() + 2,
+            self._button_width,
+            max(0, option.rect.height() - 4),
+        )
+
+    def paint(self, painter, option, index):
+        item_option = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(item_option, index)
+        item_option.text = ""
+        item_option.features &= ~QtWidgets.QStyleOptionViewItem.HasCheckIndicator
+        style = option.widget.style() if option.widget else QtWidgets.QApplication.style()
+        style.drawControl(QtWidgets.QStyle.CE_ItemViewItem, item_option, painter, option.widget)
+
+        check_option = QtWidgets.QStyleOptionButton()
+        indicator = style.pixelMetric(QtWidgets.QStyle.PM_IndicatorWidth, None, option.widget)
+        check_option.rect = QtCore.QRect(
+            option.rect.left() + self._margin,
+            option.rect.center().y() - indicator // 2,
+            indicator,
+            indicator,
+        )
+        check_option.state = QtWidgets.QStyle.State_Enabled
+        check_option.state |= (
+            QtWidgets.QStyle.State_On
+            if index.data(Qt.CheckStateRole) == Qt.Checked
+            else QtWidgets.QStyle.State_Off
+        )
+        style.drawPrimitive(QtWidgets.QStyle.PE_IndicatorCheckBox, check_option, painter, option.widget)
+
+        button_rect = self._buttonRect(option)
+        text_rect = QtCore.QRect(
+            check_option.rect.right() + self._margin,
+            option.rect.top(),
+            max(0, button_rect.left() - check_option.rect.right() - 2 * self._margin),
+            option.rect.height(),
+        )
+        text = option.fontMetrics.elidedText(
+            str(index.data(Qt.DisplayRole)), Qt.ElideMiddle, text_rect.width()
+        )
+        painter.save()
+        painter.setPen(item_option.palette.color(
+            QtGui.QPalette.HighlightedText
+            if option.state & QtWidgets.QStyle.State_Selected
+            else QtGui.QPalette.Text
+        ))
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, text)
+        painter.restore()
+
+        button_option = QtWidgets.QStyleOptionButton()
+        button_option.rect = button_rect
+        # button_option.text = "✖"
+        button_option.text = "×"
+        button_option.state = QtWidgets.QStyle.State_Enabled
+        button_option.palette = item_option.palette
+        button_option.palette.setColor(
+            QtGui.QPalette.ButtonText, QtGui.QColor(220, 35, 35)
+        )
+        style.drawControl(
+            QtWidgets.QStyle.CE_PushButton,
+            button_option,
+            painter,
+            option.widget,
+        )
+
+    def sizeHint(self, option, index):
+        size = super(FileListItemDelegate, self).sizeHint(option, index)
+        size.setHeight(max(size.height(), 24))
+        # Do not let the full file path expand the row horizontally. QListView
+        # will stretch this minimal width to its viewport, keeping the delete
+        # icon anchored to the visible right edge.
+        size.setWidth(1)
+        return size
+
+    def editorEvent(self, event, model, option, index):
+        if (
+            event.type() == QtCore.QEvent.MouseButtonRelease
+            and event.button() == Qt.LeftButton
+            and self._buttonRect(option).contains(event.pos())
+        ):
+            widget = option.widget
+            item = widget.item(index.row()) if widget is not None else None
+            if item is not None:
+                self.deleteClicked.emit(item)
+            return True
+        return super(FileListItemDelegate, self).editorEvent(event, model, option, index)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -184,7 +285,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.annotationInfo.setText("Current: 0 | Total: 0")  # 默认文本
 
         self.fileListWidget = QtWidgets.QListWidget()
+        self.fileListWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.fileListWidget.setResizeMode(QtWidgets.QListView.Adjust)
+        self.fileListWidget.setTextElideMode(Qt.ElideMiddle)
         self.fileListWidget.itemSelectionChanged.connect(self.fileSelectionChanged)
+        self.fileListItemDelegate = FileListItemDelegate(self.fileListWidget)
+        self.fileListItemDelegate.deleteClicked.connect(self.deleteImageAndAnnotation)
+        self.fileListWidget.setItemDelegate(self.fileListItemDelegate)
         fileListLayout = QtWidgets.QVBoxLayout()
         fileListLayout.setContentsMargins(0, 0, 0, 0)
         fileListLayout.setSpacing(0)
@@ -207,9 +314,8 @@ class MainWindow(QtWidgets.QMainWindow):
             crosshair=self._config["canvas"]["crosshair"],
         )
         self.canvas.zoomRequest.connect(self.zoomRequest)
-        self.canvas.mouseMoved.connect(
-            lambda pos: self.status(f"Mouse is at: x={pos.x()}, y={pos.y()}")
-        )
+        self._mouse_position = None
+        self.canvas.mouseMoved.connect(self.updateStatusBar)
 
         scrollArea = QtWidgets.QScrollArea()
         scrollArea.setWidget(self.canvas)
@@ -222,6 +328,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.canvas.newShape.connect(self.newShape)
         self.canvas.shapeMoved.connect(self.setDirty)
+        self.canvas.shapeMoved.connect(self.updateStatusBar)
+        self.canvas.shapeMoved.connect(self.batchMoveSelectedShapes)
         self.canvas.selectionChanged.connect(self.shapeSelectionChanged)
         self.canvas.drawingPolygon.connect(self.toggleDrawingSensitive)
 
@@ -278,10 +386,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("选择模型"),
             enabled=False,
         )
+        object_shortcut = shortcuts["object"]
+        if isinstance(object_shortcut, (list, tuple)):
+            object_shortcut = [
+                key for key in object_shortcut if str(key).upper() != "W"
+            ]
+            object_shortcut = object_shortcut or None
+        elif object_shortcut is not None and str(object_shortcut).upper() == "W":
+            object_shortcut = None
         object = action(
             self.tr("&目标检测"),
             self.toggleObjectDetectionPanel,
-            shortcuts["object"],
+            object_shortcut,
             "object",
             self.tr("目标检测"),
             enabled=False,
@@ -295,6 +411,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("标注映射"),
             enabled=False,
             checkable=True,
+        )
+        tracking_prediction = action(
+            self.tr("&跟踪预测"),
+            self.toggleTrackingPredictionPanel,
+            None,
+            "objects",
+            self.tr("根据上一帧的检测框预测当前帧标注"),
+            enabled=False,
+            checkable=True,
+        )
+        batch_process = action(
+            self.tr("&批量处理"),
+            self.showBatchProcessDialog,
+            None,
+            "objects",
+            self.tr("设置批量处理的帧范围"),
+            enabled=False,
         )
         image_pass = action(
             self.tr("&复核通过"),
@@ -415,6 +548,14 @@ class MainWindow(QtWidgets.QMainWindow):
             "delete",
             self.tr("Delete current label file"),
             enabled=False,
+        )
+
+        confirmDelete = action(
+            self.tr("删除时确认"),
+            self.setDeleteConfirmationEnabled,
+            tip=self.tr("删除图片和标注文件前显示确认框"),
+            checkable=True,
+            checked=True,
         )
 
         changeOutputDir = action(
@@ -795,6 +936,8 @@ class MainWindow(QtWidgets.QMainWindow):
             open=open_,
             rotate=rotate,
             sequence_warping=sequence_warping,
+            tracking_prediction=tracking_prediction,
+            batch_process=batch_process,
             select_onnx=select_onnx,
             object=object,
             image_pass=image_pass,
@@ -810,6 +953,7 @@ class MainWindow(QtWidgets.QMainWindow):
             video_slice=video_slice,
             close=close,
             deleteFile=deleteFile,
+            confirmDelete=confirmDelete,
             toggleKeepPrevMode=toggle_keep_prev_mode,
             delete=delete,
             edit=edit,
@@ -892,6 +1036,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 createAiMaskMode,
                 editMode,
                 brightnessContrast,
+                batch_process,
+                tracking_prediction,
             ),
             onShapesPresent=(saveAs, hideAll, showAll, toggleAll),
         )
@@ -922,6 +1068,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 saveWithImageData,
                 close,
                 deleteFile,
+                confirmDelete,
                 None,
                 quit,
             ),
@@ -1034,6 +1181,106 @@ class MainWindow(QtWidgets.QMainWindow):
         sequence_warping_layout.addWidget(sequence_warping_hint)
         self.sequence_warping_window.setLayout(sequence_warping_layout)
 
+        # Tracking implementations can be added later with
+        # registerTrackingAlgorithm(name, runner). A runner receives
+        # (previous_image, current_image, previous_boxes) and returns current
+        # boxes as [label, [x1, y1], [x2, y2]].
+        self.tracking_algorithms = {}
+        self.tracking_prediction_enabled = False
+        self.tracking_prediction_window = TrackingPredictionWindow(self)
+        self.tracking_prediction_window.closed.connect(
+            self.onTrackingPredictionWindowClosed
+        )
+        self.tracking_algorithm_combo = QtWidgets.QComboBox(
+            self.tracking_prediction_window
+        )
+        self.tracking_algorithm_combo.addItem(self.tr("暂无可用算法"), None)
+        self.tracking_keep_existing = QtWidgets.QCheckBox(
+            self.tr("保留已有标签"), self.tracking_prediction_window
+        )
+        self.template_match_threshold = QtWidgets.QDoubleSpinBox(
+            self.tracking_prediction_window
+        )
+        self.template_match_threshold.setRange(0.0, 1.0)
+        self.template_match_threshold.setSingleStep(0.05)
+        self.template_match_threshold.setDecimals(2)
+        self.template_match_threshold.setValue(0.8)
+        self.template_nms_threshold = QtWidgets.QDoubleSpinBox(
+            self.tracking_prediction_window
+        )
+        self.template_nms_threshold.setRange(0.0, 1.0)
+        self.template_nms_threshold.setSingleStep(0.05)
+        self.template_nms_threshold.setDecimals(2)
+        self.template_nms_threshold.setValue(0.3)
+        self.tracking_start_button = QtWidgets.QPushButton(
+            self.tr("开始"), self.tracking_prediction_window
+        )
+        self.tracking_start_button.clicked.connect(self.runTrackingPrediction)
+        tracking_layout = QtWidgets.QVBoxLayout()
+        tracking_layout.setContentsMargins(12, 12, 12, 12)
+        tracking_layout.setSpacing(8)
+        tracking_layout.addWidget(QtWidgets.QLabel(
+            self.tr("跟踪算法"), self.tracking_prediction_window
+        ))
+        tracking_layout.addWidget(self.tracking_algorithm_combo)
+        template_threshold_layout = QtWidgets.QHBoxLayout()
+        self.template_match_threshold_label = QtWidgets.QLabel(
+            self.tr("匹配阈值"), self.tracking_prediction_window
+        )
+        template_threshold_layout.addWidget(self.template_match_threshold_label)
+        template_threshold_layout.addWidget(self.template_match_threshold)
+        tracking_layout.addLayout(template_threshold_layout)
+        template_nms_layout = QtWidgets.QHBoxLayout()
+        self.template_nms_threshold_label = QtWidgets.QLabel(
+            self.tr("NMS 阈值"), self.tracking_prediction_window
+        )
+        template_nms_layout.addWidget(self.template_nms_threshold_label)
+        template_nms_layout.addWidget(self.template_nms_threshold)
+        tracking_layout.addLayout(template_nms_layout)
+        tracking_layout.addWidget(self.tracking_keep_existing)
+        tracking_layout.addWidget(self.tracking_start_button)
+        tracking_layout.addStretch()
+        self.tracking_prediction_window.setLayout(tracking_layout)
+        self.registerTrackingAlgorithm(self.tr("CSRT"), track_boxes_csrt)
+        self.registerTrackingAlgorithm(
+            self.tr("模板匹配"), self._runTemplateMatching
+        )
+        self.tracking_algorithm_combo.currentIndexChanged.connect(
+            self._updateTrackingParameterState
+        )
+        self._updateTrackingParameterState()
+
+        # 批量模式仅记录帧范围；实际操作仍在主画布上完成。
+        self.batch_processing_enabled = False
+        self.batch_start_index = 0
+        self.batch_end_index = 0
+        self.batch_process_dialog = QtWidgets.QDialog(self)
+        self.batch_process_dialog.setWindowTitle(self.tr("批量处理"))
+        self.batch_process_dialog.setModal(False)
+        self.batch_start_spin = QtWidgets.QSpinBox(self.batch_process_dialog)
+        self.batch_end_spin = QtWidgets.QSpinBox(self.batch_process_dialog)
+        self.batch_start_spin.setPrefix(self.tr("第 "))
+        self.batch_start_spin.setSuffix(self.tr(" 张"))
+        self.batch_end_spin.setPrefix(self.tr("第 "))
+        self.batch_end_spin.setSuffix(self.tr(" 张"))
+        self.batch_process_start_button = QtWidgets.QPushButton(
+            self.tr("开始批量处理"), self.batch_process_dialog
+        )
+        self.batch_process_start_button.clicked.connect(self.startBatchProcessing)
+        self.batch_process_stop_button = QtWidgets.QPushButton(
+            self.tr("停止批量处理"), self.batch_process_dialog
+        )
+        self.batch_process_stop_button.clicked.connect(self.stopBatchProcessing)
+        self.batch_process_stop_button.setEnabled(False)
+        self.batch_process_status = QtWidgets.QLabel(self.batch_process_dialog)
+        batch_layout = QtWidgets.QVBoxLayout(self.batch_process_dialog)
+        batch_layout.addWidget(QtWidgets.QLabel(self.tr("选择处理范围（包含起止帧）：")))
+        batch_layout.addWidget(self.batch_start_spin)
+        batch_layout.addWidget(self.batch_end_spin)
+        batch_layout.addWidget(self.batch_process_start_button)
+        batch_layout.addWidget(self.batch_process_stop_button)
+        batch_layout.addWidget(self.batch_process_status)
+
         self.object_detection_window = ObjectDetectionWindow(self)
         self.object_detection_window.closed.connect(
             self.onObjectDetectionWindowClosed
@@ -1050,6 +1297,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("开始"), self.object_detection_window
         )
         self.object_detection_run_button.clicked.connect(self.object_detection)
+        self.object_detection_infer_shortcut = QtWidgets.QShortcut(
+            QtGui.QKeySequence(shortcuts.get("object_detection_infer", "W")),
+            self,
+        )
+        self.object_detection_infer_shortcut.setContext(Qt.ApplicationShortcut)
+        self.object_detection_infer_shortcut.setEnabled(False)
+        self.object_detection_infer_shortcut.activated.connect(
+            self._runObjectDetectionShortcut
+        )
         self.object_detection_stop_button = QtWidgets.QPushButton(
             self.tr("停止"), self.object_detection_window
         )
@@ -1071,6 +1327,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.text2label_conf_thres_text.setText(str(self.text2label_conf_thres))
         self.text2label_conf_thres_text.setPlaceholderText("Conf(0-1)")
         self.text2label_conf_thres_text.editingFinished.connect(self.update_text2label_conf_threshold)
+        self.text2label_nms_thres = 0.7
+        self.text2label_nms_thres_text = QtWidgets.QLineEdit(self.object_detection_window)
+        self.text2label_nms_thres_text.setText(str(self.text2label_nms_thres))
+        self.text2label_nms_thres_text.setPlaceholderText("NMS(0-1)")
+        self.text2label_nms_thres_text.editingFinished.connect(self.update_text2label_nms_threshold)
         self.text2label_imgsz_w = 1200
         self.text2label_imgsz_h = 800
         self.text2label_imgsz_w_text = QtWidgets.QLineEdit(self.object_detection_window)
@@ -1103,6 +1364,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ai_annotation_stop_requested = False
         self.ai_annotation_is_running = False
         self.text2label_model_type = None
+        self.text2label_sam_strategy = None
         self.text2label_model_path = None
         self.text2label_sam_predictor = None
         self.text2label_sam_model_path = None
@@ -1146,8 +1408,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._selectAiText2LabelModelComboBox.addItems(text2label_model_names)
         # 禁止自动加载模型 提升软件整体初始化速度
         text_model_index = 0
-        if self._config["ai"]["text_default"] in text2label_model_names:
-            text_model_index = text2label_model_names.index(self._config["ai"]["text_default"])
+        text_default = self._config["ai"]["text_default"]
+        if text_default == "SAM3":
+            text_default = "SAM3(accuracy)"
+        if text_default in text2label_model_names:
+            text_model_index = text2label_model_names.index(text_default)
         self._selectAiText2LabelModelComboBox.setCurrentIndex(text_model_index)
         self._selectAiText2LabelModelComboBox.currentIndexChanged.connect(
             lambda: self.init_text2lable_model(
@@ -1238,11 +1503,15 @@ class MainWindow(QtWidgets.QMainWindow):
         dino_layout.setSpacing(6)
         self.Text2Label_Text.setPlaceholderText(self.tr("输入文本提示，例如 car.person"))
         self.text2label_conf_thres_text.setFixedWidth(80)
+        self.text2label_nms_thres_text.setFixedWidth(80)
         self.text2label_imgsz_w_text.setFixedWidth(80)
         self.text2label_imgsz_h_text.setFixedWidth(80)
         dino_conf_layout = QtWidgets.QHBoxLayout()
         dino_conf_layout.addWidget(QtWidgets.QLabel("置信度阈值", self.object_detection_window))
         dino_conf_layout.addWidget(self.text2label_conf_thres_text)
+        dino_nms_layout = QtWidgets.QHBoxLayout()
+        dino_nms_layout.addWidget(QtWidgets.QLabel("NMS 阈值", self.object_detection_window))
+        dino_nms_layout.addWidget(self.text2label_nms_thres_text)
         dino_imgsz_layout = QtWidgets.QHBoxLayout()
         dino_imgsz_layout.addWidget(QtWidgets.QLabel("图像尺寸", self.object_detection_window))
         dino_imgsz_layout.addWidget(QtWidgets.QLabel("长", self.object_detection_window))
@@ -1252,6 +1521,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dino_layout.addWidget(self._selectAiText2LabelModelComboBox)
         dino_layout.addWidget(self.Text2Label_Text)
         dino_layout.addLayout(dino_conf_layout)
+        dino_layout.addLayout(dino_nms_layout)
         dino_layout.addLayout(dino_imgsz_layout)
         dino_layout.addWidget(self.check_all_infer_dino)
         dino_layout.addWidget(self.check_save_existing_label_dino)
@@ -1301,6 +1571,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.lefttool = (
             object,
             sequence_warping,
+            tracking_prediction,
+            batch_process,
             # rotate,
             # video_object,
             fitWindow,
@@ -1379,6 +1651,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # XXX: Could be completely declarative.
         # Restore application settings.
         self.settings = QtCore.QSettings("labelme", "labelme")
+        confirm_delete = self.settings.value("confirmDelete", True)
+        if isinstance(confirm_delete, str):
+            confirm_delete = confirm_delete.lower() not in ("false", "0", "no")
+        self.actions.confirmDelete.setChecked(bool(confirm_delete))
         self.recentFiles = self.settings.value("recentFiles", []) or []
         size = self.settings.value("window/size", QtCore.QSize(600, 500))
         position = self.settings.value("window/position", QtCore.QPoint(0, 0))
@@ -1795,6 +2071,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.duplicate.setEnabled(n_selected)
         self.actions.copy.setEnabled(n_selected)
         self.actions.edit.setEnabled(n_selected)
+        self.updateStatusBar()
+
+    def updateStatusBar(self, mouse_position=None):
+        """Show the selected shape's bounds, or the current mouse position."""
+        if mouse_position is not None:
+            self._mouse_position = mouse_position
+
+        if len(self.canvas.selectedShapes) == 1:
+            rect = self.canvas.selectedShapes[0].boundingRect()
+            center = rect.center()
+            self.status(
+                "Selected shape: center=({:g}, {:g}), width={:g}, height={:g}".format(
+                    center.x(), center.y(), rect.width(), rect.height()
+                )
+            )
+        elif self._mouse_position is not None:
+            self.status(
+                "Mouse is at: x={:g}, y={:g}".format(
+                    self._mouse_position.x(), self._mouse_position.y()
+                )
+            )
 
     def addLabel(self, shape):
         if shape.group_id is None:
@@ -2145,6 +2442,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def pasteSelectedShape(self):
         self.loadShapes(self._copied_shapes, replace=False)
         self.setDirty()
+        if self.batch_processing_enabled and self._copied_shapes:
+            self._batchPasteShapes(self._copied_shapes)
 
     def copySelectedShape(self):
         self._copied_shapes = [s.copy() for s in self.canvas.selectedShapes]
@@ -2424,6 +2723,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.select_onnx.setEnabled(True)
         self.actions.object.setEnabled(True)
         self.actions.sequence_warping.setEnabled(True)
+        self.actions.tracking_prediction.setEnabled(True)
+        self.actions.batch_process.setEnabled(True)
         # set zoom values
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
@@ -2501,6 +2802,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.select_onnx.setEnabled(True)
             self.actions.object.setEnabled(True)
             self.actions.sequence_warping.setEnabled(True)
+            self.actions.tracking_prediction.setEnabled(True)
         else:
             self.canvas.setEnabled(False)
             self.actions.save.setEnabled(False)
@@ -2516,8 +2818,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.select_onnx.setEnabled(False)
             self.actions.object.setEnabled(False)
             self.actions.sequence_warping.setEnabled(False)
+            self.actions.tracking_prediction.setEnabled(False)
             self.closeObjectDetectionPanel()
             self.closeSequenceWarpingPanel()
+            self.closeTrackingPredictionPanel()
         if self.labelFile:
             shapes = self.labelFile.shapes
             s = []
@@ -2603,6 +2907,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not model_path:
             self.text2label_model = None
             self.text2label_model_type = None
+            self.text2label_sam_strategy = None
             self.text2label_model_path = None
             self.text2label_sam_predictor = None
             self.text2label_sam_model_path = None
@@ -2623,9 +2928,13 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.text2label_model.size = [self.text2label_imgsz_w, self.text2label_imgsz_h]
             self.text2label_model_type = "grounding_dino"
+            self.text2label_sam_strategy = None
         else:
             self.text2label_model = None
             self.text2label_model_type = "sam3_text"
+            self.text2label_sam_strategy = (
+                config_path if config_path in ("speed", "accuracy") else "accuracy"
+            )
         self.actions.rotate.setEnabled(False)
         self._refreshDetectionPanelState()
         return self.text2label_model if self.text2label_model is not None else True
@@ -2644,6 +2953,12 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         if hasattr(self, "object_detection_run_button"):
             self.object_detection_run_button.setEnabled(bool(getattr(self, "net", None)))
+        if hasattr(self, "object_detection_infer_shortcut"):
+            self.object_detection_infer_shortcut.setEnabled(
+                self.object_detection_window.isVisible()
+                and bool(getattr(self, "net", None))
+                and not self.ai_annotation_is_running
+            )
         if hasattr(self, "sam3_run_button"):
             self.sam3_run_button.setEnabled(bool(getattr(self, "sam3_model_file", None)))
         if hasattr(self, "Text2Label_detect_button"):
@@ -2667,7 +2982,7 @@ class MainWindow(QtWidgets.QMainWindow):
         requested_imgsz = self.text2label_imgsz_w
         overrides = dict(
             conf=self.text2label_conf_thres,
-            iou=0.7,
+            iou=self.text2label_nms_thres,
             task="segment",
             mode="predict",
             model=model_path,
@@ -2703,6 +3018,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.object_detection_run_button.setEnabled(
             bool(getattr(self, "net", None)) and not running
         )
+        self.object_detection_infer_shortcut.setEnabled(
+            self.object_detection_window.isVisible()
+            and bool(getattr(self, "net", None))
+            and not running
+        )
         self.Text2Label_detect_button.setEnabled(self._text2label_model_ready() and not running)
         self.sam3_run_button.setEnabled(
             bool(getattr(self, "sam3_model_file", None)) and not running
@@ -2711,6 +3031,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def requestStopAiAnnotation(self):
         if self.ai_annotation_is_running:
             self.ai_annotation_stop_requested = True
+
+    def _runObjectDetectionShortcut(self):
+        if (
+            self.object_detection_window.isVisible()
+            and getattr(self, "net", None) is not None
+            and self.object_detection_run_button.isEnabled()
+        ):
+            self.object_detection_run_button.click()
 
     def _run_ai_annotation(self, algorithm_name, single_runner, reload_current=False):
         options = self._get_ai_annotation_options(algorithm_name)
@@ -2739,12 +3067,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def toggleObjectDetectionPanel(self, checked=False):
         self.object_detection_enabled = checked
         if checked:
-            self._refreshDetectionPanelState()
             self.object_detection_window.show()
             self.object_detection_window.raise_()
             self.object_detection_window.activateWindow()
         else:
             self.object_detection_window.hide()
+        self._refreshDetectionPanelState()
 
     def onObjectDetectionWindowClosed(self):
         self.object_detection_enabled = False
@@ -2753,6 +3081,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._selectAiText2LabelModelComboBox.setCurrentIndex(0)
         self.text2label_model = None
         self.text2label_model_type = None
+        self.text2label_sam_strategy = None
         self.text2label_model_path = None
         self.text2label_sam_predictor = None
         self.text2label_sam_model_path = None
@@ -2764,6 +3093,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sam3_predictor_model_path = None
         self.sam3_semantic_model_path = None
         self.actions.object.setChecked(False)
+        self._refreshDetectionPanelState()
+        # closed is emitted before QDialog finishes hiding, so force the
+        # visibility-dependent shortcut off here.
+        self.object_detection_infer_shortcut.setEnabled(False)
 
     def closeObjectDetectionPanel(self):
         if self.object_detection_window.isVisible():
@@ -2884,6 +3217,15 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         return labels
 
+    # def _show_sam_mask_overlay(self, result):
+    #     if not hasattr(self, "canvas"):
+    #         return
+    #     if result is None or result.masks is None or len(result.masks) == 0:
+    #         self.canvas.clearSamMaskOverlay()
+    #         return
+    #     mask_data = result.masks.data.detach().cpu().numpy()
+    #     self.canvas.setSamMaskOverlay(mask_data)
+
     def _run_sam3_box_detection(self, prompt_box):
         options = self.get_sam3_annotation_options()
         default_label = self._get_default_sam3_label(options["single_target_only"])
@@ -2908,6 +3250,7 @@ class MainWindow(QtWidgets.QMainWindow):
             predictor.set_image(image)
             results = predictor(bboxes=[prompt_box])
         result = results[0] if results else None
+        # self._show_sam_mask_overlay(result)
         if options["single_target_only"]:
             labels = self._sam3_boxes_to_ai_labels(
                 result,
@@ -2928,6 +3271,7 @@ class MainWindow(QtWidgets.QMainWindow):
             label_file = osp.join(self.output_dir, osp.basename(label_file))
         self.save_AI_Labels(label_file, labels, keep_existing=options["keep_existing_labels"])
         self.loadFile(self.filename)
+        # self._show_sam_mask_overlay(result)
 
     def _get_prompt_box_from_shape(self, shape):
         xs = [point.x() for point in shape.points[:2]]
@@ -2979,6 +3323,151 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.onSequenceWarpingWindowClosed()
 
+    def toggleTrackingPredictionPanel(self, checked=False):
+        self.tracking_prediction_enabled = checked
+        if checked:
+            self.tracking_prediction_window.show()
+            self.tracking_prediction_window.raise_()
+            self.tracking_prediction_window.activateWindow()
+        else:
+            self.tracking_prediction_window.hide()
+
+    def onTrackingPredictionWindowClosed(self):
+        self.tracking_prediction_enabled = False
+        self.actions.tracking_prediction.setChecked(False)
+
+    def closeTrackingPredictionPanel(self):
+        if self.tracking_prediction_window.isVisible():
+            self.tracking_prediction_window.close()
+        else:
+            self.onTrackingPredictionWindowClosed()
+
+    def registerTrackingAlgorithm(self, name, runner):
+        """Register runner(previous_image, current_image, previous_boxes)."""
+        if not name or not callable(runner):
+            raise ValueError("Tracking algorithm requires a name and callable runner")
+        self.tracking_algorithms[name] = runner
+        if (
+            self.tracking_algorithm_combo.count() == 1
+            and self.tracking_algorithm_combo.itemData(0) is None
+        ):
+            self.tracking_algorithm_combo.clear()
+        existing = self.tracking_algorithm_combo.findData(name)
+        if existing < 0:
+            self.tracking_algorithm_combo.addItem(name, name)
+
+    def _runTemplateMatching(
+        self, previous_image, current_image, previous_boxes
+    ):
+        return track_boxes_template_matching(
+            previous_image,
+            current_image,
+            previous_boxes,
+            score_threshold=self.template_match_threshold.value(),
+            nms_threshold=self.template_nms_threshold.value(),
+        )
+
+    def _updateTrackingParameterState(self, _index=None):
+        enabled = (
+            self.tracking_algorithm_combo.currentData() == self.tr("模板匹配")
+        )
+        for widget in (
+            self.template_match_threshold_label,
+            self.template_match_threshold,
+            self.template_nms_threshold_label,
+            self.template_nms_threshold,
+        ):
+            widget.setEnabled(enabled)
+
+    @staticmethod
+    def _trackingBoxesFromShapes(shapes):
+        boxes = []
+        for shape in shapes:
+            points = shape.get("points") or []
+            if len(points) < 2:
+                continue
+            xs = [point[0] for point in points]
+            ys = [point[1] for point in points]
+            x1, x2 = min(xs), max(xs)
+            y1, y2 = min(ys), max(ys)
+            if x1 < x2 and y1 < y2:
+                boxes.append([shape.get("label", "object"), [x1, y1], [x2, y2]])
+        return boxes
+
+    @staticmethod
+    def _normalizeTrackingBoxes(boxes):
+        normalized = []
+        for box in boxes or []:
+            if not isinstance(box, (list, tuple)) or len(box) < 3:
+                raise ValueError("跟踪结果必须为 [标签, 左上点, 右下点]")
+            label, point1, point2 = box[:3]
+            if len(point1) != 2 or len(point2) != 2:
+                raise ValueError("跟踪框坐标必须是二维坐标")
+            x1, x2 = sorted((float(point1[0]), float(point2[0])))
+            y1, y2 = sorted((float(point1[1]), float(point2[1])))
+            if x1 < x2 and y1 < y2:
+                normalized.append([str(label), [x1, y1], [x2, y2]])
+        return normalized
+
+    def runTrackingPrediction(self, _value=False):
+        algorithm_name = self.tracking_algorithm_combo.currentData()
+        runner = self.tracking_algorithms.get(algorithm_name)
+        if runner is None:
+            self.errorMessage(self.tr("跟踪预测"), self.tr("当前没有可用的跟踪算法。"))
+            return
+        if not self.filename or self.filename not in self.imageList:
+            self.errorMessage(self.tr("跟踪预测"), self.tr("请先打开当前帧图像。"))
+            return
+        current_index = self.imageList.index(self.filename)
+        if current_index == 0:
+            self.errorMessage(self.tr("跟踪预测"), self.tr("当前图像没有上一帧。"))
+            return
+
+        previous_filename = self.imageList[current_index - 1]
+        previous_label_file = self._labelFileForImage(previous_filename)
+        if not osp.isfile(previous_label_file):
+            self.errorMessage(self.tr("跟踪预测"), self.tr("上一帧没有标注文件。"))
+            return
+        try:
+            with open(previous_label_file, "r", encoding="utf-8") as stream:
+                previous_shapes = json.load(stream).get("shapes") or []
+            previous_boxes = self._trackingBoxesFromShapes(previous_shapes)
+            if not previous_boxes:
+                self.errorMessage(self.tr("跟踪预测"), self.tr("上一帧没有可跟踪的检测框。"))
+                return
+            previous_image = cv2.imdecode(
+                np.fromfile(previous_filename, dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+            current_image = cv2.imdecode(
+                np.fromfile(self.filename, dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+            if previous_image is None or current_image is None:
+                raise ValueError("无法读取上一帧或当前帧图像")
+            predicted_boxes = self._normalizeTrackingBoxes(
+                runner(previous_image, current_image, previous_boxes)
+            )
+        except (OSError, ValueError, TypeError) as error:
+            self.errorMessage(self.tr("跟踪预测失败"), str(error))
+            return
+        except Exception as error:
+            logger.exception("Tracking prediction failed")
+            self.errorMessage(self.tr("跟踪预测失败"), str(error))
+            return
+
+        if not predicted_boxes:
+            self.errorMessage(self.tr("跟踪预测"), self.tr("算法没有返回有效检测框。"))
+            return
+        label_file = self._labelFileForImage(self.filename)
+        if self.labelFile is not None:
+            self.pre_shape = self.labelFile.shapes
+        if self.save_AI_Labels(
+            label_file,
+            predicted_boxes,
+            keep_existing=self.tracking_keep_existing.isChecked(),
+        ):
+            self.loadFile(self.filename)
+            self.status(self.tr("跟踪预测完成，已保存当前帧标注。"))
+
     def update_homography_threshold(self):
         # Update the homography threshold from the QLineEdit input
         try:
@@ -3023,6 +3512,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.text2label_model.box_threshold = self.text2label_conf_thres
         except ValueError:
             print("Invalid input for Text2Label Confidence Threshold")
+
+    def update_text2label_nms_threshold(self):
+        try:
+            value = float(self.text2label_nms_thres_text.text())
+            if not 0.0 <= value <= 1.0:
+                raise ValueError
+            self.text2label_nms_thres = value
+            if self.text2label_model_type == "sam3_text" and self.text2label_sam_predictor is not None:
+                self.text2label_sam_predictor.args.iou = value
+        except ValueError:
+            self.text2label_nms_thres_text.setText(str(self.text2label_nms_thres))
+            print("Invalid input for Text2Label NMS Threshold")
 
     def update_text2label_imgsz(self):
         try:
@@ -3115,6 +3616,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def sequence_warping(self, _value=False):
         if not self.sequence_warping_enabled:
             return
+        # Navigation can trigger warping automatically.  A previous image is
+        # allowed to have no label file (or an empty one), so treat that as a
+        # no-op instead of trying to open a missing JSON file.
+        if not self.filename or self.filename not in self.imageList:
+            return
         index = self.imageList.index(self.filename)
         if index == 0:
             return 0
@@ -3122,6 +3628,25 @@ class MainWindow(QtWidgets.QMainWindow):
             pre_image_name = self.imageList[index - 1]
             pre_image = cv2.imdecode(np.fromfile(pre_image_name, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
             cur_image = cv2.imdecode(np.fromfile(self.filename, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            if pre_image is None or cur_image is None:
+                logger.warning("Sequence warping skipped because an image could not be read.")
+                return
+            json_path = os.path.splitext(pre_image_name)[0] + '.json'
+            if self.output_dir:
+                json_path = osp.join(self.output_dir, osp.basename(json_path))
+            if not osp.isfile(json_path):
+                logger.info("Sequence warping skipped because previous image has no annotation file: %s", json_path)
+                return
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning("Sequence warping skipped because previous annotation could not be read: %s", exc)
+                return
+            shapes = data.get('shapes') or []
+            if not shapes:
+                logger.info("Sequence warping skipped because previous annotation has no shapes.")
+                return
             image_height, image_width = cur_image.shape[:2]
             H = None
             if self.check_Lucas_Kanade.isChecked():
@@ -3131,11 +3656,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if H is None:
                 logger.warning("Sequence warping skipped because homography estimation failed.")
                 return
-            json_path = os.path.splitext(pre_image_name)[0] + '.json'
             polygon = []
-            with open(json_path, 'r') as f:
-                data = json.load(f)
-            for shape in data['shapes']:
+            for shape in shapes:
                 src_point0 = np.array([[shape['points'][0][0], shape['points'][0][1]]], dtype=np.float32)
                 src_point1 = np.array([[shape['points'][1][0], shape['points'][1][1]]], dtype=np.float32)
                 class_id = shape['label']
@@ -3164,7 +3686,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     points1[1] = max(0, min(points1[1], image_height - 1))
                     polygon.append([class_id, points0, points1])
             if self.keep_current_label.isChecked():
-                if self.labelFile.shapes is not None:
+                if self.labelFile is not None and self.labelFile.shapes:
                     current_label = self.labelFile.shapes
                     polygon1 = polygon.copy()
                     for box1 in current_label:
@@ -3216,6 +3738,184 @@ class MainWindow(QtWidgets.QMainWindow):
             reload_current=True,
         )
 
+    @staticmethod
+    def _sam3_text_tile_regions(image_shape, square_ratio=1.15, overlap_ratio=0.15):
+        """Return the minimum evenly-spaced overlapping square tiles for a rectangular image."""
+        height, width = image_shape[:2]
+        short_side, long_side = min(height, width), max(height, width)
+        if short_side <= 0 or long_side / short_side <= square_ratio:
+            return []
+
+        max_stride = short_side * (1.0 - overlap_ratio)
+        tile_count = int(math.ceil((long_side - short_side) / max_stride)) + 1
+        offsets = np.linspace(0, long_side - short_side, tile_count).round().astype(int)
+        if width > height:
+            return [(int(offset), 0, int(offset + short_side), height) for offset in offsets]
+        return [(0, int(offset), width, int(offset + short_side)) for offset in offsets]
+
+    @staticmethod
+    def _sam3_result_detections(
+        result,
+        prompts,
+        offset=(0, 0),
+        source="tile",
+        tile_region=None,
+        image_shape=None,
+        tile_id=None,
+    ):
+        """Convert a SAM3 result to image-coordinate detection dictionaries."""
+        if result is None or result.boxes is None or len(result.boxes) == 0:
+            return []
+        boxes = result.boxes.xyxy.cpu().numpy()
+        classes = result.boxes.cls.cpu().numpy().astype(int)
+        scores = (
+            result.boxes.conf.cpu().numpy()
+            if result.boxes.conf is not None
+            else np.ones(len(boxes), dtype=np.float32)
+        )
+        detections = []
+        offset_x, offset_y = offset
+        for box, cls_idx, score in zip(boxes, classes, scores):
+            label = prompts[cls_idx] if 0 <= cls_idx < len(prompts) else prompts[0]
+            x0, y0, x1, y1 = box
+            mapped_box = [
+                float(x0 + offset_x),
+                float(y0 + offset_y),
+                float(x1 + offset_x),
+                float(y1 + offset_y),
+            ]
+            touches_internal_boundary = False
+            if tile_region is not None and image_shape is not None:
+                tile_x0, tile_y0, tile_x1, tile_y1 = tile_region
+                image_height, image_width = image_shape[:2]
+                margin = max(4.0, 0.02 * min(tile_x1 - tile_x0, tile_y1 - tile_y0))
+                touches_internal_boundary = (
+                    (tile_x0 > 0 and mapped_box[0] <= tile_x0 + margin)
+                    or (tile_x1 < image_width and mapped_box[2] >= tile_x1 - margin)
+                    or (tile_y0 > 0 and mapped_box[1] <= tile_y0 + margin)
+                    or (tile_y1 < image_height and mapped_box[3] >= tile_y1 - margin)
+                )
+            detections.append(
+                {
+                    "label": label,
+                    "box": mapped_box,
+                    "score": float(score),
+                    "source": source,
+                    "tile_id": tile_id,
+                    "touches_internal_boundary": touches_internal_boundary,
+                }
+            )
+        return detections
+
+    @staticmethod
+    def _box_overlap_metrics(first, second):
+        x0 = max(first[0], second[0])
+        y0 = max(first[1], second[1])
+        x1 = min(first[2], second[2])
+        y1 = min(first[3], second[3])
+        intersection = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+        first_area = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
+        second_area = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
+        union = first_area + second_area - intersection
+        iou = intersection / union if union > 0 else 0.0
+        ioa_first = intersection / first_area if first_area > 0 else 0.0
+        ioa_second = intersection / second_area if second_area > 0 else 0.0
+        return iou, ioa_first, ioa_second
+
+    def _fuse_sam3_text_detections(self, full_detections, tile_detections):
+        """Fuse tile results, consulting full-image boxes only for boundary-fragment grouping."""
+        nms_threshold = self.text2label_nms_thres
+        consumed = set()
+        merged_tiles = []
+        for full_detection in full_detections:
+            fragments = []
+            for index, tile_detection in enumerate(tile_detections):
+                if index in consumed or not tile_detection["touches_internal_boundary"]:
+                    continue
+                if tile_detection["label"] != full_detection["label"]:
+                    continue
+                iou, tile_covered, _ = self._box_overlap_metrics(
+                    tile_detection["box"], full_detection["box"]
+                )
+                if iou >= 0.1 or tile_covered >= 0.25:
+                    fragments.append((index, tile_detection))
+
+            # At least two different tiles must contribute before the whole-image
+            # detection is allowed to guide a merge.
+            if len({item[1]["tile_id"] for item in fragments}) < 2:
+                continue
+            fragment_boxes = [item[1]["box"] for item in fragments]
+            merged_tiles.append(
+                {
+                    "label": full_detection["label"],
+                    "box": [
+                        min(box[0] for box in fragment_boxes),
+                        min(box[1] for box in fragment_boxes),
+                        max(box[2] for box in fragment_boxes),
+                        max(box[3] for box in fragment_boxes),
+                    ],
+                    "score": max(item[1]["score"] for item in fragments),
+                    "source": "merged_tiles",
+                    "tile_id": None,
+                    "touches_internal_boundary": False,
+                }
+            )
+            consumed.update(item[0] for item in fragments)
+
+        tile_candidates = merged_tiles + [
+            detection for index, detection in enumerate(tile_detections) if index not in consumed
+        ]
+
+        kept_tiles = []
+        for detection in sorted(tile_candidates, key=lambda item: item["score"], reverse=True):
+            duplicate = False
+            for kept in kept_tiles:
+                if detection["label"] != kept["label"]:
+                    continue
+                iou, detection_covered, kept_covered = self._box_overlap_metrics(
+                    detection["box"], kept["box"]
+                )
+                if iou >= nms_threshold or detection_covered >= 0.8 or kept_covered >= 0.8:
+                    duplicate = True
+                    break
+            if not duplicate:
+                kept_tiles.append(detection)
+        return kept_tiles
+
+    def _run_sam3_text_inference(self, predictor, image, prompts):
+        """Run direct-resize or adaptive tiled SAM3 inference for the selected strategy."""
+        predictor.set_image(image)
+        results = predictor(text=prompts)
+        full_result = results[0] if results else None
+        full_detections = self._sam3_result_detections(full_result, prompts, source="full")
+
+        if self.text2label_sam_strategy == "speed":
+            return full_detections
+
+        tile_regions = self._sam3_text_tile_regions(image.shape)
+        if not tile_regions:
+            return full_detections
+
+        tile_detections = []
+        for tile_id, (x0, y0, x1, y1) in enumerate(tile_regions):
+            if self.ai_annotation_stop_requested:
+                break
+            tile = np.ascontiguousarray(image[y0:y1, x0:x1])
+            predictor.set_image(tile)
+            tile_results = predictor(text=prompts)
+            tile_result = tile_results[0] if tile_results else None
+            tile_detections.extend(
+                self._sam3_result_detections(
+                    tile_result,
+                    prompts,
+                    offset=(x0, y0),
+                    tile_region=(x0, y0, x1, y1),
+                    image_shape=image.shape,
+                    tile_id=tile_id,
+                )
+            )
+        return self._fuse_sam3_text_detections(full_detections, tile_detections)
+
     def Text2Label_single(self, options=None, _value=False):
         image = labelme.utils.img_qt_to_arr(self.image)
         if self.labelFile is not None:
@@ -3234,6 +3934,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 return
             self.update_text2label_conf_threshold()
+            self.update_text2label_nms_threshold()
             self.update_text2label_imgsz()
             if self.text2label_imgsz_w != self.text2label_imgsz_h:
                 self.errorMessage(
@@ -3244,40 +3945,26 @@ class MainWindow(QtWidgets.QMainWindow):
             
             predictor = self._ensure_text2label_sam_predictor()
             predictor.args.conf = self.text2label_conf_thres
-            predictor.set_image(image)
-            results = predictor(text=prompts)
-            result = results[0] if results else None
-            if result is not None:
-                if result.masks is not None and len(result.masks) > 0:
-                    mask_data = result.masks.data.cpu().numpy()
-                    classes = (
-                        result.boxes.cls.cpu().numpy().astype(int).tolist()
-                        if result.boxes is not None and result.boxes.cls is not None
-                        else [0] * len(mask_data)
-                    )
-                    for i, mask in enumerate(mask_data):
-                        ys, xs = np.where(mask)
-                        if len(xs) == 0 or len(ys) == 0:
-                            continue
-                        x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
-                        cls_idx = classes[i] if i < len(classes) else 0
-                        label = prompts[cls_idx] if 0 <= cls_idx < len(prompts) else prompts[0]
-                        polygon.append([label, [x0, y0], [x1, y1]])
-                elif result.boxes is not None and len(result.boxes) > 0:
-                    boxes = result.boxes.xyxy.cpu().numpy().tolist()
-                    classes = result.boxes.cls.cpu().numpy().astype(int).tolist()
-                    for box, cls_idx in zip(boxes, classes):
-                        x0, y0, x1, y1 = box
-                        label = prompts[cls_idx] if 0 <= cls_idx < len(prompts) else prompts[0]
-                        polygon.append([label, [int(x0), int(y0)], [int(x1), int(y1)]])
+            predictor.args.iou = self.text2label_nms_thres
+            detections = self._run_sam3_text_inference(predictor, image, prompts)
+            polygon.extend(
+                [
+                    detection["label"],
+                    [int(round(detection["box"][0])), int(round(detection["box"][1]))],
+                    [int(round(detection["box"][2])), int(round(detection["box"][3]))],
+                ]
+                for detection in detections
+            )
         else:
             self.update_text2label_conf_threshold()
+            self.update_text2label_nms_threshold()
             self.update_text2label_imgsz()
             boxes_filt, pred_phrases = self.text2label_model.detect(
                 image,
                 self.Text2Label_Text.text(),
                 size=[self.text2label_imgsz_w, self.text2label_imgsz_h],
                 box_threshold=self.text2label_conf_thres,
+                nms_threshold=self.text2label_nms_thres,
             )
             H, W = image.shape[0], image.shape[1]
             for box, label in zip(boxes_filt, pred_phrases):
@@ -3295,6 +3982,8 @@ class MainWindow(QtWidgets.QMainWindow):
             keep_existing=options["keep_existing_labels"] if options else None,
         )
         self.loadFile(self.filename)
+        # if self.text2label_model_type == "sam3_text":
+        #     self._show_sam_mask_overlay(result)
 
     def Run_Text2Label(self, _value=False):
         if not self._text2label_model_ready():
@@ -3401,6 +4090,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._config["store_data"] = enabled
         self.actions.saveWithImageData.setChecked(enabled)
 
+    def setDeleteConfirmationEnabled(self, enabled):
+        self.settings.setValue("confirmDelete", bool(enabled))
+
     def closeEvent(self, event):
         if not self.mayContinue():
             event.ignore()
@@ -3409,6 +4101,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.setValue("window/position", self.pos())
         self.settings.setValue("window/state", self.saveState())
         self.settings.setValue("recentFiles", self.recentFiles)
+        self.settings.setValue(
+            "confirmDelete", self.actions.confirmDelete.isChecked()
+        )
         # ask the use for where to save the labels
         # self.settings.setValue('window/geometry', self.saveGeometry())
 
@@ -3607,6 +4302,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.closeObjectDetectionPanel()
         self.closeSequenceWarpingPanel()
+        self.closeTrackingPredictionPanel()
         self.resetState()
         self.setClean()
         self.toggleActions(False)
@@ -3717,8 +4413,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # if yes == QtWidgets.QMessageBox.warning(
         #         self, self.tr("Attention"), msg, yes | no, yes
         # ):
+        selected_shapes = [shape.copy() for shape in self.canvas.selectedShapes]
         self.remLabels(self.canvas.deleteSelected())
         self.setDirty()
+        if self.batch_processing_enabled and selected_shapes:
+            self._batchDeleteOverlappingShapes(selected_shapes)
         if self.noShapes():
             for action in self.actions.onShapesPresent:
                 action.setEnabled(False)
@@ -3731,8 +4430,166 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setDirty()
 
     def moveShape(self):
+        moves = []
+        if self.batch_processing_enabled:
+            for old_shape, new_shape in zip(self.canvas.selectedShapes, self.canvas.selectedShapesCopy):
+                if old_shape.points and new_shape.points:
+                    moves.append((old_shape.copy(), new_shape.points[0].x() - old_shape.points[0].x(), new_shape.points[0].y() - old_shape.points[0].y()))
         self.canvas.endMove(copy=False)
         self.setDirty()
+        self._batchMoveShapes(moves)
+
+    # Batch processing -------------------------------------------------
+    # These helpers operate on label JSON files directly so the visible frame,
+    # its undo history and its selection are not disturbed by batch updates.
+    def showBatchProcessDialog(self, _value=False):
+        total = len(self.imageList)
+        if not total:
+            return
+        for spin in (self.batch_start_spin, self.batch_end_spin):
+            spin.setRange(1, total)
+        current = self.imageList.index(self.filename) + 1 if self.filename in self.imageList else 1
+        if not self.batch_processing_enabled:
+            self.batch_start_spin.setValue(current)
+            self.batch_end_spin.setValue(current)
+            self.batch_process_status.setText(self.tr("尚未开始"))
+            self.batch_process_start_button.setText(self.tr("开始批量处理"))
+        self.batch_process_dialog.show()
+        self.batch_process_dialog.raise_()
+        self.batch_process_dialog.activateWindow()
+
+    def startBatchProcessing(self):
+        start = self.batch_start_spin.value()
+        end = self.batch_end_spin.value()
+        if start > end:
+            QtWidgets.QMessageBox.warning(self, self.tr("批量处理"), self.tr("起始帧不能大于结束帧。"))
+            return
+        self.batch_start_index = start - 1
+        self.batch_end_index = end - 1
+        self.batch_processing_enabled = True
+        self.batch_process_start_button.setEnabled(False)
+        self.batch_process_stop_button.setEnabled(True)
+        self.batch_process_status.setText(
+            self.tr("已启用：第 {} 张到第 {} 张").format(start, end)
+        )
+
+    def stopBatchProcessing(self):
+        self.batch_processing_enabled = False
+        self.batch_process_start_button.setEnabled(True)
+        self.batch_process_stop_button.setEnabled(False)
+        self.batch_process_status.setText(self.tr("已停止；后续操作仅作用于当前帧。"))
+
+    def _batchImageFilenames(self):
+        if not self.batch_processing_enabled:
+            return []
+        return self.imageList[self.batch_start_index:self.batch_end_index + 1]
+
+    def _batchLabelFilename(self, image_filename):
+        basename = osp.splitext(osp.basename(image_filename))[0] + LabelFile.suffix
+        return osp.join(self.output_dir, basename) if self.output_dir else osp.splitext(image_filename)[0] + LabelFile.suffix
+
+    def _shapeToData(self, shape):
+        data = shape.other_data.copy()
+        data.update(dict(
+            label=shape.label,
+            points=[(point.x(), point.y()) for point in shape.points],
+            group_id=shape.group_id,
+            description=shape.description,
+            shape_type=shape.shape_type,
+            flags=shape.flags,
+            mask=None if shape.mask is None else utils.img_arr_to_b64(shape.mask.astype(np.uint8)),
+        ))
+        if shape.shape_type == "rotate":
+            data["direction"] = shape.direction
+        return data
+
+    @staticmethod
+    def _batchShapeRect(shape):
+        points = shape.get("points") if isinstance(shape, dict) else shape.points
+        if not points:
+            return None
+        xy = [(point[0], point[1]) if isinstance(point, (list, tuple)) else (point.x(), point.y()) for point in points]
+        xs, ys = zip(*xy)
+        return QtCore.QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+    def _batchOverlaps(self, first, second):
+        first_rect, second_rect = self._batchShapeRect(first), self._batchShapeRect(second)
+        return first_rect is not None and second_rect is not None and first_rect.intersects(second_rect)
+
+    def _loadBatchLabel(self, image_filename):
+        label_filename = self._batchLabelFilename(image_filename)
+        if osp.exists(label_filename) and LabelFile.is_label_file(label_filename):
+            return LabelFile(label_filename), label_filename
+        label_file = LabelFile()
+        label_file.shapes, label_file.flags, label_file.otherData, label_file.imagePass = [], {}, {}, None
+        label_file.imagePath = osp.relpath(image_filename, osp.dirname(label_filename))
+        label_file.imageData = LabelFile.load_image_file(image_filename)
+        return label_file, label_filename
+
+    def _saveBatchLabel(self, label_file, label_filename, image_filename):
+        image = QtGui.QImage.fromData(label_file.imageData or LabelFile.load_image_file(image_filename))
+        label_file.save(
+            filename=label_filename, shapes=label_file.shapes,
+            imagePath=label_file.imagePath or osp.relpath(image_filename, osp.dirname(label_filename)),
+            imageData=label_file.imageData if self._config["store_data"] else None,
+            imageHeight=image.height(), imageWidth=image.width(), otherData=label_file.otherData,
+            flags=label_file.flags, imagePass=label_file.imagePass,
+        )
+
+    def _applyToBatchLabels(self, operation):
+        for image_filename in self._batchImageFilenames():
+            if image_filename == self.filename:
+                continue
+            try:
+                label_file, label_filename = self._loadBatchLabel(image_filename)
+                if operation(label_file.shapes):
+                    self._saveBatchLabel(label_file, label_filename, image_filename)
+            except (LabelFileError, OSError) as error:
+                logger.warning("Batch processing skipped %s: %s", image_filename, error)
+
+    def _batchPasteShapes(self, shapes):
+        copied_shapes = [self._shapeToData(shape) for shape in shapes]
+        self._applyToBatchLabels(lambda target: target.extend(copy.deepcopy(copied_shapes)) or True)
+
+    def _batchDeleteOverlappingShapes(self, source_shapes):
+        def delete(target):
+            retained = [shape for shape in target if not any(self._batchOverlaps(shape, source) for source in source_shapes)]
+            changed = len(retained) != len(target)
+            target[:] = retained
+            return changed
+        self._applyToBatchLabels(delete)
+
+    def batchMoveSelectedShapes(self):
+        if not self.batch_processing_enabled or not self.canvas.selectedShapes or len(self.canvas.shapesBackups) < 2:
+            return
+        previous_shapes = self.canvas.shapesBackups[-2]
+        moves = []
+        for shape in self.canvas.selectedShapes:
+            try:
+                old_shape = previous_shapes[self.canvas.shapes.index(shape)]
+            except ValueError:
+                continue
+            if not old_shape.points or not shape.points:
+                continue
+            dx = shape.points[0].x() - old_shape.points[0].x()
+            dy = shape.points[0].y() - old_shape.points[0].y()
+            if dx or dy:
+                moves.append((old_shape, dx, dy))
+        self._batchMoveShapes(moves)
+
+    def _batchMoveShapes(self, moves):
+        if not moves:
+            return
+        def move(target):
+            changed = False
+            for target_shape in target:
+                for source_shape, dx, dy in moves:
+                    if self._batchOverlaps(target_shape, source_shape):
+                        target_shape["points"] = [[point[0] + dx, point[1] + dy] for point in target_shape["points"]]
+                        changed = True
+                        break
+            return changed
+        self._applyToBatchLabels(move)
 
     def openDirDialog(self, _value=False, dirpath=None):
         if not self.mayContinue():
@@ -3763,6 +4620,97 @@ class MainWindow(QtWidgets.QMainWindow):
             lst.append(item.text())
         return lst
 
+    def _labelFileForImage(self, filename):
+        label_file = osp.splitext(filename)[0] + LabelFile.suffix
+        if self.output_dir:
+            label_file = osp.join(self.output_dir, osp.basename(label_file))
+        return label_file
+
+    def _addFileListItem(self, filename, label_file):
+        item = QtWidgets.QListWidgetItem(filename)
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setCheckState(
+            Qt.Checked
+            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file)
+            else Qt.Unchecked
+        )
+        self.fileListWidget.addItem(item)
+
+    def deleteImageAndAnnotation(self, item):
+        filename = str(item.text())
+        label_file = self._labelFileForImage(filename)
+        if self.actions.confirmDelete.isChecked():
+            message_box = QtWidgets.QMessageBox(self)
+            message_box.setIcon(QtWidgets.QMessageBox.Warning)
+            message_box.setWindowTitle(self.tr("删除确认"))
+            message_box.setText(
+                self.tr(
+                    "确定要永久删除图片“{0}”及其标注文件（如果存在）吗？"
+                ).format(osp.basename(filename))
+            )
+            message_box.setStandardButtons(
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+            )
+            message_box.setDefaultButton(QtWidgets.QMessageBox.No)
+            message_box.button(QtWidgets.QMessageBox.Yes).setText(self.tr("删除"))
+            message_box.button(QtWidgets.QMessageBox.No).setText(self.tr("取消"))
+            if message_box.exec_() != QtWidgets.QMessageBox.Yes:
+                return
+
+        row = self.fileListWidget.row(item)
+        was_current = filename == self.filename
+        try:
+            os.remove(filename)
+        except OSError as e:
+            self.errorMessage(self.tr("Error deleting file"), str(e))
+            return
+
+        annotation_error = None
+        if osp.exists(label_file):
+            try:
+                os.remove(label_file)
+            except OSError as e:
+                annotation_error = e
+
+        self.fileListWidget.blockSignals(True)
+        self.fileListWidget.takeItem(row)
+        self.fileListWidget.blockSignals(False)
+
+        if was_current:
+            self.resetState()
+            self.setClean()
+            if self.fileListWidget.count():
+                # Removing the current item can leave QListWidget's internal
+                # current index unchanged. Reset it first so selecting the item
+                # now occupying this row always emits selectionChanged and loads
+                # the next image (or the previous image when the last was removed).
+                next_row = min(row, self.fileListWidget.count() - 1)
+                self.fileListWidget.setCurrentRow(-1)
+                self.fileListWidget.clearSelection()
+                self.fileListWidget.setCurrentRow(next_row)
+                self.fileListWidget.scrollToItem(
+                    self.fileListWidget.item(next_row),
+                    QtWidgets.QAbstractItemView.EnsureVisible,
+                )
+            else:
+                self.annotationInfo.setText("Current: 0 | Total: 0 ")
+                self.toggleActions(False)
+                self.canvas.setEnabled(False)
+        elif self.filename in self.imageList:
+            self.annotationInfo.setText(
+                "Current: {} | Total: {} ".format(
+                    self.imageList.index(self.filename) + 1, len(self.imageList)
+                )
+            )
+
+        logger.info("Image file is removed: %s", filename)
+        if not annotation_error and not osp.exists(label_file):
+            logger.info("Annotation file is removed (if it existed): %s", label_file)
+        if annotation_error:
+            self.errorMessage(
+                self.tr("Error deleting annotation file"), str(annotation_error)
+            )
+
     def importDroppedImageFiles(self, imageFiles):
         extensions = [
             ".%s" % fmt.data().decode().lower()
@@ -3777,13 +4725,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = osp.join(self.output_dir, label_file_without_path)
-            item = QtWidgets.QListWidgetItem(file)
-            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file):
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
-            self.fileListWidget.addItem(item)
+            self._addFileListItem(file, label_file)
 
         if len(self.imageList) > 1:
             self.actions.openNextImg.setEnabled(True)
@@ -3815,13 +4757,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = osp.join(self.output_dir, label_file_without_path)
-            item = QtWidgets.QListWidgetItem(filename)
-            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file):
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
-            self.fileListWidget.addItem(item)
+            self._addFileListItem(filename, label_file)
         self.openNextImg(load=load)
 
     def scanAllImages(self, folderPath):

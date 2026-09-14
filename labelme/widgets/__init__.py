@@ -21,6 +21,7 @@ from .unique_label_qlist_widget import UniqueLabelQListWidget
 from .zoom_widget import ZoomWidget
 from .sequence_warping_window import SequenceWarpingWindow
 from .object_detection_window import ObjectDetectionWindow
+from .tracking_prediction_window import TrackingPredictionWindow
 
 from .dataset_dialog import Create_dataset_Dialog
 from .QC_widget import QCWidget

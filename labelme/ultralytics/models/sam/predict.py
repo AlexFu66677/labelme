@@ -130,8 +130,7 @@ class Predictor(BasePredictor):
         not_tensor = not isinstance(im, torch.Tensor)
         if not_tensor:
             im = np.stack(self.pre_transform(im))
-            im = im[..., ::-1].transpose((0, 3, 1, 2))
-            im = np.ascontiguousarray(im)
+            im = im[..., ::-1].transpose((0, 3, 1, 2)).copy()
             im = torch.from_numpy(im)
 
         im = im.to(self.device)

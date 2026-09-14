@@ -1,4 +1,5 @@
 import imgviz
+import numpy as np
 from qtpy import QtCore
 from qtpy import QtGui
 from qtpy import QtWidgets
@@ -109,6 +110,7 @@ class Canvas(QtWidgets.QWidget):
         self.box_selectshapes = None
         self.selection_rect = None
         self._ai_model = None
+        self._sam_mask_overlay = None
 
     def fillDrawing(self):
         return self._fill_drawing
@@ -864,6 +866,8 @@ class Canvas(QtWidgets.QWidget):
         p.translate(self.offsetToCenter())
 
         p.drawPixmap(0, 0, self.pixmap)
+        # if self._sam_mask_overlay is not None:
+        #     p.drawImage(0, 0, self._sam_mask_overlay)
 
         # draw crosshair
         if (
@@ -1235,6 +1239,7 @@ class Canvas(QtWidgets.QWidget):
 
     def loadPixmap(self, pixmap, clear_shapes=True):
         self.pixmap = pixmap
+        self._sam_mask_overlay = None
         if self._ai_model:
             self._ai_model.set_image(
                 image=labelme.utils.img_qt_to_arr(self.pixmap.toImage())
@@ -1258,6 +1263,35 @@ class Canvas(QtWidgets.QWidget):
     def setShapeVisible(self, shape, value):
         self.visible[shape] = value
         self.update()
+
+    # def clearSamMaskOverlay(self):
+    #     self._sam_mask_overlay = None
+    #     self.update()
+
+    # def setSamMaskOverlay(self, masks, colors=None):
+    #     if masks is None or len(masks) == 0 or self.pixmap.isNull():
+    #         self.clearSamMaskOverlay()
+    #         return
+    #     h = self.pixmap.height()
+    #     w = self.pixmap.width()
+    #     overlay = np.zeros((h, w, 4), dtype=np.uint8)
+    #     palette = colors or [
+    #         (0, 255, 0, 96),
+    #         (255, 165, 0, 96),
+    #         (0, 191, 255, 96),
+    #         (255, 64, 128, 96),
+    #     ]
+    #     for i, mask in enumerate(masks):
+    #         if mask is None:
+    #             continue
+    #         mask = np.asarray(mask).astype(bool)
+    #         if mask.shape[:2] != (h, w):
+    #             continue
+    #         color = palette[i % len(palette)]
+    #         overlay[mask] = color
+    #     image = QtGui.QImage(overlay.data, w, h, overlay.strides[0], QtGui.QImage.Format_RGBA8888)
+    #     self._sam_mask_overlay = image.copy()
+    #     self.update()
 
     def overrideCursor(self, cursor):
         self.restoreCursor()

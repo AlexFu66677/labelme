@@ -40,6 +40,7 @@ def main():
         "--config",
         dest="config",
         help="config file or yaml-format string (default: {})".format(
+
             default_config_file
         ),
         default="./config/default_config.yaml",

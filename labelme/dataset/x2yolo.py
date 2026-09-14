@@ -47,6 +47,8 @@ def decode_json(json_path, output_dir, name_list, res, sequence=None):
                 name_list[label_name] = len(name_list)
 
         if (image['shape_type'] == 'rectangle' or (image['shape_type'] == 'mask' and len(image['points']) == 2)):
+            print(json_path)
+
             x1 = int(image['points'][0][0])
             y1 = int(image['points'][0][1])
             x2 = int(image['points'][1][0])

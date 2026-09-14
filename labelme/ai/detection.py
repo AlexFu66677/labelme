@@ -463,8 +463,15 @@ def detect_postprocess(pred, object_conf_thres,ratio,image_width,image_height):
 
     for detection in result:
         x_center, y_center, w, h, score, class_id = detection
-        detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
-                  int((x_center + w / 2) / ratio), int((y_center + h / 2) / ratio)]
+
+        # center_x = x_center / ratio
+        # center_y = y_center / ratio
+
+        # if not (1450 <= center_x <= 1700 and 700 <= center_y <= 1080):
+        #     continue
+
+        detect = [int((x_center - w / 2) / ratio+1), int((y_center - h / 2) / ratio+2),
+                  int((x_center + w / 2) / ratio+1), int((y_center + h / 2) / ratio+2)]
 
         points0 = [detect[0], detect[1]]
         points1 = [detect[2], detect[3]]

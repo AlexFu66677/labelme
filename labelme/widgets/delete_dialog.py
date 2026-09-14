@@ -332,7 +332,7 @@ class ImageBrowser(QMainWindow):
             for f in os.listdir(folder)
             if f.lower().endswith(valid_exts)
         ]
-        self.image_paths= sorted(self.image_paths,key = self.custom_sort_key)
+        # self.image_paths= sorted(self.image_paths,key = self.custom_sort_key)
 
         self.page = 0
         self.selected_files.clear()

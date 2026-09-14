@@ -556,7 +556,7 @@ class GroundingDINO():
         self.specical_texts = ["[CLS]", "[SEP]", ".", "?"]
         self.tokenizer = FullTokenizer(vocab_file=vocab_path)
 
-    def detect(self, srcimg, text_prompt, size=None, box_threshold=None):
+    def detect(self, srcimg, text_prompt, size=None, box_threshold=None, nms_threshold=0.7):
         infer_size = size if size is not None else self.size
         infer_box_threshold = self.box_threshold if box_threshold is None else box_threshold
         rescaled_image = resize_image(srcimg, infer_size, max_size=self.max_size)
@@ -603,56 +603,93 @@ class GroundingDINO():
         boxes_filt = prediction_boxes_[filt_mask]  # num_filt, 4
 
         pred_phrases = []
+        valid_boxes = []
+        valid_scores = []
         for logit, box in zip(logits_filt, boxes_filt):
             pred_phrase = get_phrases_from_posmap(logit > self.text_threshold, input_ids[0, :], self.tokenizer)
             if pred_phrase is None:
                 continue
             pred_phrases.append(pred_phrase)
+            valid_boxes.append(box)
+            valid_scores.append(float(np.max(logit)))
+
+        if not valid_boxes:
+            return np.empty((0, 4), dtype=prediction_boxes_.dtype), []
+
+        boxes_filt = np.asarray(valid_boxes)
+        scores = np.asarray(valid_scores)
+        xyxy = boxes_filt.copy()
+        xyxy[:, :2] -= xyxy[:, 2:] * 0.5
+        xyxy[:, 2:] += xyxy[:, :2]
+        order = scores.argsort()[::-1]
+        keep = []
+        while order.size > 0:
+            current = order[0]
+            keep.append(current)
+            if order.size == 1:
+                break
+            remaining = order[1:]
+            xx1 = np.maximum(xyxy[current, 0], xyxy[remaining, 0])
+            yy1 = np.maximum(xyxy[current, 1], xyxy[remaining, 1])
+            xx2 = np.minimum(xyxy[current, 2], xyxy[remaining, 2])
+            yy2 = np.minimum(xyxy[current, 3], xyxy[remaining, 3])
+            intersection = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
+            current_area = max(0.0, xyxy[current, 2] - xyxy[current, 0]) * max(
+                0.0, xyxy[current, 3] - xyxy[current, 1]
+            )
+            remaining_area = np.maximum(0.0, xyxy[remaining, 2] - xyxy[remaining, 0]) * np.maximum(
+                0.0, xyxy[remaining, 3] - xyxy[remaining, 1]
+            )
+            union = current_area + remaining_area - intersection
+            iou = np.divide(intersection, union, out=np.zeros_like(intersection), where=union > 0)
+            order = remaining[iou <= nms_threshold]
+        boxes_filt = boxes_filt[keep]
+        pred_phrases = [pred_phrases[i] for i in keep]
         # end_time1 = time.perf_counter()  # 高精度结束计时
         # elapsed_ms1 = (end_time1 - end_time) * 1000  # 转换为毫秒
         # print(f"推理处理耗时: {elapsed_ms1:.3f} 毫秒")
         return boxes_filt, pred_phrases
 
 
-# def draw_boxes_to_image(image, boxes, labels):
-#     h, w = image.shape[:2]
-#     for box, label in zip(boxes, labels):
-#         # from 0..1 to 0..W, 0..H
-#         box = box * np.array([w, h, w, h])
-#         # from xywh to xyxy
-#         box[:2] -= box[2:] * 0.5
-#         box[2:] += box[:2]
-#
-#         xmin, ymin, xmax, ymax = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-#         cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 0, 255), thickness=2)
-#         # txt_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
-#         # cv2.rectangle(image, (xmin, ymin + 1), (xmin + txt_size[0] + 1, ymin + int(1.5 * txt_size[1])), (255, 255, 255), -1)
-#         cv2.putText(image, label, (xmin, ymin - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), thickness=2)
-#     return image
+def draw_boxes_to_image(image, boxes, labels):
+    h, w = image.shape[:2]
+    for box, label in zip(boxes, labels):
+        # from 0..1 to 0..W, 0..H
+        box = box * np.array([w, h, w, h])
+        # from xywh to xyxy
+        box[:2] -= box[2:] * 0.5
+        box[2:] += box[:2]
+
+        xmin, ymin, xmax, ymax = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+        cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 0, 255), thickness=2)
+        # txt_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+        # cv2.rectangle(image, (xmin, ymin + 1), (xmin + txt_size[0] + 1, ymin + int(1.5 * txt_size[1])), (255, 255, 255), -1)
+        cv2.putText(image, label, (xmin, ymin - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), thickness=2)
+    return image
 
 
-# if __name__ == '__main__':
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("--model_path", type=str,
-#                         default="D:/code/labelme_sam/labelme/ai/seg_model/GroundingDINO_SwinT_OGC.onnx",
-#                         help="onnx model path")
-#     parser.add_argument("--image_path", type=str, default=r"D:\dataset\visdrone\111/0000006_00159_d_0000001.jpg",
-#                         help="path to image file")
-#     parser.add_argument("--text_prompt", type=str, default="tree . ",
-#                         help="text prompt, 每个类别名称之间以 . 隔开")  ###cat_dog.jpeg的提示词:"chair . person . dog .""     demo7.jpg的提示词:"Horse . Clouds . Grasses . Sky . Hill ."
-#     parser.add_argument("--box_threshold", type=float, default=0.3, help="box threshold")
-#     parser.add_argument("--text_threshold", type=float, default=0.25, help="text threshold")
-#     args = parser.parse_args()
-#
-#     mynet = GroundingDINO(args.model_path, args.box_threshold, "D:\code\labelme_sam\labelme/ai\seg_model/vocab.txt", "cpu",text_threshold=args.text_threshold)
-#     srcimg = cv2.imread(args.image_path)
-#
-#     boxes_filt, pred_phrases = mynet.detect(srcimg, args.text_prompt)
-    # drawimg = draw_boxes_to_image(srcimg, boxes_filt, pred_phrases)
-    #
-    # cv2.imwrite('result.jpg', drawimg)
-    # winName = 'GroundingDINO use OnnxRuntime'
-    # cv2.namedWindow(winName, 0)
-    # cv2.imshow(winName, drawimg)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_path", type=str,
+                        default="D:/code/labelme_sam/labelme/ai/seg_model/GroundingDINO_SwinT_OGC.onnx",
+                        help="onnx model path")
+    parser.add_argument("--image_path", type=str, default=r"C:\Users\fjl\Desktop\240\raw_data\640_640_uav/01002050.jpg",
+                        help="path to image file")
+    parser.add_argument("--text_prompt", type=str, default="drone . ",
+                        help="text prompt, 每个类别名称之间以 . 隔开")  ###cat_dog.jpeg的提示词:"chair . person . dog .""     demo7.jpg的提示词:"Horse . Clouds . Grasses . Sky . Hill ."
+    parser.add_argument("--box_threshold", type=float, default=0.3, help="box threshold")
+    parser.add_argument("--text_threshold", type=float, default=0.25, help="text threshold")
+    args = parser.parse_args()
+
+    mynet = GroundingDINO(args.model_path, args.box_threshold, "D:\code\labelme_sam\labelme/ai\seg_model/vocab.txt", "cpu",text_threshold=args.text_threshold)
+    srcimg = cv2.imread(args.image_path)
+
+    boxes_filt, pred_phrases = mynet.detect(srcimg, args.text_prompt)
+    drawimg = draw_boxes_to_image(srcimg, boxes_filt, pred_phrases)
+
+    cv2.imwrite('result.jpg', drawimg)
+    winName = 'GroundingDINO use OnnxRuntime'
+    cv2.namedWindow(winName, 0)
+    cv2.imshow(winName, drawimg)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
