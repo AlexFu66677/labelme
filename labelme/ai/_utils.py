@@ -1,30 +1,29 @@
 import imgviz
+import cv2
 import numpy as np
-import skimage
 
 from labelme.logger import logger
 
 
-def _get_contour_length(contour):
-    contour_start = contour
-    contour_end = np.r_[contour[1:], contour[0:1]]
-    return np.linalg.norm(contour_end - contour_start, axis=1).sum()
-
-
 def compute_polygon_from_mask(mask):
-    contours = skimage.measure.find_contours(np.pad(mask, pad_width=1))
+    mask = np.asarray(mask)
+    binary = np.ascontiguousarray((mask > 0).astype(np.uint8))
+    contours, _hierarchy = cv2.findContours(
+        binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+    )
     if len(contours) == 0:
         logger.warning("No contour found, so returning empty polygon.")
         return np.empty((0, 2), dtype=np.float32)
 
-    contour = max(contours, key=_get_contour_length)
+    contour = max(contours, key=cv2.contourArea)
+    perimeter = cv2.arcLength(contour, True)
     POLYGON_APPROX_TOLERANCE = 0.004
-    polygon = skimage.measure.approximate_polygon(
-        coords=contour,
-        tolerance=np.ptp(contour, axis=0).max() * POLYGON_APPROX_TOLERANCE,
+    polygon = cv2.approxPolyDP(
+        contour, perimeter * POLYGON_APPROX_TOLERANCE, True
     )
-    polygon = np.clip(polygon, (0, 0), (mask.shape[0] - 1, mask.shape[1] - 1))
-    polygon = polygon[:-1]  # drop last point that is duplicate of first point
+    polygon = polygon.reshape(-1, 2).astype(np.float32)
+    polygon[:, 0] = np.clip(polygon[:, 0], 0, mask.shape[1] - 1)
+    polygon[:, 1] = np.clip(polygon[:, 1], 0, mask.shape[0] - 1)
 
     if 0:
         import PIL.Image
@@ -35,4 +34,41 @@ def compute_polygon_from_mask(mask):
             imgviz.draw.circle_(image_pil, center=point, diameter=10, fill=(0, 255, 0))
         imgviz.io.imsave("contour.jpg", np.asarray(image_pil))
 
-    return polygon[:, ::-1]  # yx -> xy
+    return polygon
+
+
+def compute_polygons_from_mask(mask):
+    """Convert every connected foreground region in a mask to a polygon."""
+    mask = np.asarray(mask)
+    binary = np.ascontiguousarray((mask > 0).astype(np.uint8))
+    component_count, components, stats, _centroids = (
+        cv2.connectedComponentsWithStats(binary, connectivity=8)
+    )
+    polygons = []
+    for component_id in range(1, component_count):
+        component = np.ascontiguousarray(
+            (components == component_id).astype(np.uint8)
+        )
+        polygon = compute_polygon_from_mask(component)
+        if len(polygon) >= 3:
+            polygons.append(polygon)
+            continue
+
+        # Very small or thin components may collapse during polygon
+        # approximation. Preserve them with a minimal rectangular polygon.
+        x, y, width, height = stats[component_id, :4]
+        x0, x1 = float(x), float(x + width - 1)
+        y0, y1 = float(y), float(y + height - 1)
+        if x0 == x1:
+            x1 = min(float(mask.shape[1] - 1), x1 + 1.0)
+            x0 = max(0.0, x0 - 1.0) if x0 == x1 else x0
+        if y0 == y1:
+            y1 = min(float(mask.shape[0] - 1), y1 + 1.0)
+            y0 = max(0.0, y0 - 1.0) if y0 == y1 else y0
+        polygons.append(
+            np.asarray(
+                [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                dtype=np.float32,
+            )
+        )
+    return polygons

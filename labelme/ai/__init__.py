@@ -11,6 +11,7 @@ else:
     here = osp.dirname(osp.abspath(__file__))
 from .efficient_sam import EfficientSam
 from .segment_anything_model import SegmentAnythingModel
+from .sam3_inference import Sam3Inference
 
 
 class EfficientSamVitT(EfficientSam):

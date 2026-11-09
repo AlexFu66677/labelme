@@ -97,7 +97,8 @@ def nms(pred, conf_thres, iou_thres):
     cls_conf = box[..., 5:]
     cls = []
     for i in range(len(cls_conf)):
-        cls.append(int(np.argmax(cls_conf[i])))
+        # cls.append(int(np.argmax(cls_conf[i])))
+        cls.append(2)
     total_cls = list(set(cls))
     output_box = []
     for i in range(len(total_cls)):
@@ -110,7 +111,8 @@ def nms(pred, conf_thres, iou_thres):
         cls_box = np.array(cls_box)
         box_conf = cls_box[..., 4]
         box_conf_sort = np.argsort(box_conf)
-        max_conf_box = cls_box[box_conf_sort[len(box_conf) - 1]]
+        cls_box = cls_box[box_conf_sort[::-1]]
+        max_conf_box = cls_box[0]
         output_box.append(max_conf_box)
         cls_box = np.delete(cls_box, 0, 0)
         while len(cls_box) > 0:
@@ -470,8 +472,8 @@ def detect_postprocess(pred, object_conf_thres,ratio,image_width,image_height):
         # if not (1450 <= center_x <= 1700 and 700 <= center_y <= 1080):
         #     continue
 
-        detect = [int((x_center - w / 2) / ratio+1), int((y_center - h / 2) / ratio+2),
-                  int((x_center + w / 2) / ratio+1), int((y_center + h / 2) / ratio+2)]
+        detect = [int((x_center - w / 2) / ratio), int((y_center - h / 2) / ratio),
+                  int((x_center + w / 2) / ratio+1), int((y_center + h / 2) / ratio+1)]
 
         points0 = [detect[0], detect[1]]
         points1 = [detect[2], detect[3]]

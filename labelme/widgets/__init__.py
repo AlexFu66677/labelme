@@ -8,6 +8,9 @@ from .color_dialog import ColorDialog
 
 from .file_dialog_preview import FileDialogPreview
 
+from .file_list_widget import FileListWidget
+from .file_list_widget import FileListItemDelegate
+
 from .label_dialog import LabelDialog
 from .label_dialog import LabelQLineEdit
 
@@ -22,6 +25,7 @@ from .zoom_widget import ZoomWidget
 from .sequence_warping_window import SequenceWarpingWindow
 from .object_detection_window import ObjectDetectionWindow
 from .tracking_prediction_window import TrackingPredictionWindow
+from .target_segmentation_window import TargetSegmentationWindow
 
 from .dataset_dialog import Create_dataset_Dialog
 from .QC_widget import QCWidget
