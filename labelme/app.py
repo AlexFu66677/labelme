@@ -73,6 +73,7 @@ import json
 import numpy as np
 
 import labelme.utils
+from labelme.yolo_io import load_yolo_shapes, save_yolo_shapes
 from . import utils
 
 # FIXME
@@ -132,6 +133,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Whether we need to save or not.
         self.dirty = False
+        self.annotation_format = "json"
+        self.annotation_path = None
 
         self._noSelectionSlot = False
 
@@ -1685,10 +1688,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.undo.setEnabled(self.canvas.isShapeRestorable)
 
         if self._config["auto_save"] or self.actions.saveAuto.isChecked():
-            label_file = osp.splitext(self.imagePath)[0] + ".json"
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = osp.join(self.output_dir, label_file_without_path)
+            label_file = self._currentAnnotationFile()
             self.saveLabels(label_file)
             return
         self.dirty = True
@@ -1721,6 +1721,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.actions.deleteFile.setEnabled(True)
         else:
             self.actions.deleteFile.setEnabled(False)
+        self._applyAnnotationModeRestrictions()
 
     def toggleActions(self, value=True):
         """Enable/Disable widgets which depend on an opened image."""
@@ -1743,6 +1744,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.imagePath = None
         self.imageData = None
         self.labelFile = None
+        self.annotation_format = "json"
+        self.annotation_path = None
         self.otherData = None
         self.tmpimageData = None
         self.rotatevalue = None
@@ -1931,6 +1934,8 @@ class MainWindow(QtWidgets.QMainWindow):
         shape = item.shape()
 
         if text is not None:
+            if text != shape.label and self.annotation_format == "txt":
+                shape.other_data.pop("yolo_class_id", None)
             shape.label = text
         if flags is not None:
             shape.flags = flags
@@ -2162,6 +2167,21 @@ class MainWindow(QtWidgets.QMainWindow):
             return data
 
         shapes = [format_shape(item.shape()) for item in self.labelList]
+        if self.annotation_format == "txt" or str(filename).lower().endswith(".txt"):
+            try:
+                save_yolo_shapes(
+                    filename, shapes, self.image.width(), self.image.height(),
+                    self._config.get("labels") or [],
+                )
+                self.annotation_format = "txt"
+                self.annotation_path = filename
+                items = self.fileListWidget.findItems(self.imagePath, Qt.MatchExactly)
+                if len(items) == 1:
+                    items[0].setCheckState(Qt.Checked)
+                return True
+            except (OSError, ValueError) as e:
+                self.errorMessage(self.tr("Error saving YOLO label data"), str(e))
+                return False
         flags = {}
         for i in range(self.flag_widget.count()):
             item = self.flag_widget.item(i)
@@ -2627,13 +2647,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tr("No such file: <b>%s</b>") % filename,
             )
             return False
-        # assumes same name, but json extension
         self.status(str(self.tr("Loading %s...")) % osp.basename(str(filename)))
-        label_file = osp.splitext(filename)[0] + ".json"
-        if self.output_dir:
-            label_file_without_path = osp.basename(label_file)
-            label_file = osp.join(self.output_dir, label_file_without_path)
-        if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file):
+        label_file = self._annotationFileForImage(filename)
+        self.annotation_path = label_file if osp.isfile(label_file) else None
+        self.annotation_format = "txt" if label_file.lower().endswith(".txt") else "json"
+        if (self.annotation_format == "json" and QtCore.QFile.exists(label_file)
+                and LabelFile.is_label_file(label_file)):
             try:
                 self.labelFile = LabelFile(label_file)
             except LabelFileError as e:
@@ -2683,6 +2702,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         self.image = image
         self.filename = filename
+        yolo_shapes = []
+        if self.annotation_format == "txt" and osp.isfile(label_file):
+            try:
+                yolo_shapes = load_yolo_shapes(
+                    label_file, image.width(), image.height(),
+                    self._config.get("labels") or [],
+                )
+            except OSError as e:
+                self.errorMessage(self.tr("Error opening YOLO label file"), str(e))
+                return False
         total_files = len(self.imageList)  # 总标注数量
         if len(self.imageList)!=0:
             current_index = self.imageList.index(filename) + 1  # 当前标注索引 (从1开始)
@@ -2695,6 +2724,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.loadLabels(self.labelFile.shapes)
             if self.labelFile.flags is not None:
                 flags.update(self.labelFile.flags)
+        elif self.annotation_format == "txt":
+            self.loadLabels(yolo_shapes)
         self.loadFlags(flags)
         if self._config["keep_prev"] and self.noShapes():
             self.loadShapes(prev_shapes, replace=False)
@@ -2709,6 +2740,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.sequence_warping.setEnabled(True)
         self.actions.tracking_prediction.setEnabled(True)
         self.actions.batch_process.setEnabled(True)
+        self._applyAnnotationModeRestrictions()
         # set zoom values
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
@@ -2750,6 +2782,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addRecentFile(self.filename)
         self.toggleActions(True)
         self._refreshDetectionPanelState()
+        self._applyAnnotationModeRestrictions()
         self.canvas.setFocus()
         self.status(str(self.tr("Loaded %s")) % osp.basename(str(filename)))
         return True
@@ -4030,7 +4063,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def saveFile(self, _value=False):
         assert not self.image.isNull(), "cannot save empty image"
-        if self.labelFile:
+        if self.annotation_format == "txt" and self.annotation_path:
+            self._saveFile(self.annotation_path)
+        elif self.labelFile:
             # DL20180323 - overwrite when in directory
             self._saveFile(self.labelFile.filename)
         elif self.output_file:
@@ -4045,29 +4080,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def saveFileDialog(self):
         caption = self.tr("%s - Choose File") % __appname__
-        filters = self.tr("Label files (*%s)") % LabelFile.suffix
+        suffix = ".txt" if self.annotation_format == "txt" else LabelFile.suffix
+        filters = self.tr("Label files (*%s)") % suffix
         if self.output_dir:
             dlg = QtWidgets.QFileDialog(self, caption, self.output_dir, filters)
         else:
             dlg = QtWidgets.QFileDialog(self, caption, self.currentPath(), filters)
-        dlg.setDefaultSuffix(LabelFile.suffix[1:])
+        dlg.setDefaultSuffix(suffix[1:])
         dlg.setAcceptMode(QtWidgets.QFileDialog.AcceptSave)
         dlg.setOption(QtWidgets.QFileDialog.DontConfirmOverwrite, False)
         dlg.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, False)
         basename = osp.basename(osp.splitext(self.filename)[0])
         if self.output_dir:
             default_labelfile_name = osp.join(
-                self.output_dir, basename + LabelFile.suffix
+                self.output_dir, basename + suffix
             )
         else:
             default_labelfile_name = osp.join(
-                self.currentPath(), basename + LabelFile.suffix
+                self.currentPath(), basename + suffix
             )
         filename = dlg.getSaveFileName(
             self,
             self.tr("Choose File"),
             default_labelfile_name,
-            self.tr("Label files (*%s)") % LabelFile.suffix,
+            self.tr("Label files (*%s)") % suffix,
         )
         if isinstance(filename, tuple):
             filename, _ = filename
@@ -4092,6 +4128,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.saveAs.setEnabled(False)
 
     def getLabelFile(self):
+        if self.annotation_format == "txt":
+            return self._currentAnnotationFile()
         if self.filename.lower().endswith(".json"):
             label_file = self.filename
         else:
@@ -4399,17 +4437,60 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.fileListWidget.imageList
 
     def _labelFileForImage(self, filename):
-        label_file = osp.splitext(filename)[0] + LabelFile.suffix
+        return self._annotationFileForImage(filename)
+
+    def _annotationCandidate(self, filename, suffix):
+        path = osp.splitext(filename)[0] + suffix
         if self.output_dir:
-            label_file = osp.join(self.output_dir, osp.basename(label_file))
-        return label_file
+            path = osp.join(self.output_dir, osp.basename(path))
+        return path
+
+    def _annotationFileForImage(self, filename):
+        """Prefer a same-name JSON annotation, then use a same-name TXT."""
+        json_file = self._annotationCandidate(filename, ".json")
+        txt_file = self._annotationCandidate(filename, ".txt")
+        if osp.isfile(json_file):
+            return json_file
+        if osp.isfile(txt_file):
+            return txt_file
+        return json_file
+
+    def _currentAnnotationFile(self):
+        if self.annotation_path:
+            return self.annotation_path
+        suffix = ".txt" if self.annotation_format == "txt" else ".json"
+        return self._annotationCandidate(self.imagePath or self.filename, suffix)
+
+    def _applyAnnotationModeRestrictions(self):
+        """TXT mode supports only ordinary rectangle creation and editing."""
+        txt_mode = self.annotation_format == "txt"
+        # Keep the user's current edit/rectangle mode while changing images.
+        # Only an unsupported drawing mode needs to fall back to rectangle.
+        if (txt_mode and not self.canvas.editing()
+                and self.canvas.createMode != "rectangle"):
+            self.toggleDrawMode(False, createMode="rectangle")
+        restricted = (
+            self.actions.createMode, self.actions.createRotateMode,
+            self.actions.createCircleMode, self.actions.createLineMode,
+            self.actions.createPointMode, self.actions.createLineStripMode,
+            self.actions.createAiPolygonMode, self.actions.createAiMaskMode,
+            self.actions.select_onnx, self.actions.object,
+            self.actions.target_segmentation, self.actions.sequence_warping,
+            self.actions.tracking_prediction, self.actions.batch_process,
+            self.actions.rotate,
+        )
+        for action in restricted:
+            action.setEnabled(not txt_mode)
+        if txt_mode:
+            self.actions.createRectangleMode.setEnabled(self.canvas.editing())
+            self.actions.editMode.setEnabled(not self.canvas.editing())
 
     def _addFileListItem(self, filename, label_file):
         self.fileListWidget.addFile(
             filename,
             checked=(
                 QtCore.QFile.exists(label_file)
-                and LabelFile.is_label_file(label_file)
+                and (label_file.lower().endswith(".txt") or LabelFile.is_label_file(label_file))
             ),
         )
 
@@ -4504,10 +4585,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for file in imageFiles:
             if file in self.imageList or not file.lower().endswith(tuple(extensions)):
                 continue
-            label_file = osp.splitext(file)[0] + ".json"
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = osp.join(self.output_dir, label_file_without_path)
+            label_file = self._annotationFileForImage(file)
             self._addFileListItem(file, label_file)
 
         if len(self.imageList) > 1:
@@ -4536,10 +4614,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except re.error:
                 pass
         for filename in filenames:
-            label_file = osp.splitext(filename)[0] + ".json"
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = osp.join(self.output_dir, label_file_without_path)
+            label_file = self._annotationFileForImage(filename)
             self._addFileListItem(filename, label_file)
         self.openNextImg(load=load)
 
