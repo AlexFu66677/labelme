@@ -4,6 +4,7 @@ import concurrent.futures
 import cv2
 import os
 import av
+import random
 
 
 class Video_slice_Dialog(QtWidgets.QDialog):
@@ -74,6 +75,27 @@ class Video_slice_Dialog(QtWidgets.QDialog):
 
         layout.addLayout(value_layout)
 
+        self.staged_sampling_checkbox = QtWidgets.QCheckBox(
+            "Enable staged random + continuous sampling"
+        )
+        self.staged_sampling_checkbox.toggled.connect(
+            self.update_staged_sampling_controls
+        )
+        layout.addWidget(self.staged_sampling_checkbox)
+
+        stable_layout = QtWidgets.QHBoxLayout()
+        self.stable_frames_label = QtWidgets.QLabel("Continuous frames:")
+        self.stable_frames_input = QtWidgets.QSpinBox()
+        self.stable_frames_input.setRange(1, 1000000)
+        self.stable_frames_input.setValue(100)
+        self.stable_frames_input.setToolTip(
+            "The middle section uses min(total frames / 3, this value) consecutive frames."
+        )
+        stable_layout.addWidget(self.stable_frames_label)
+        stable_layout.addWidget(self.stable_frames_input)
+        layout.addLayout(stable_layout)
+        self.update_staged_sampling_controls(False)
+
         self.merge_checkbox = QtWidgets.QCheckBox("Merge to MP4")
         layout.addWidget(self.merge_checkbox)
 
@@ -111,7 +133,43 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         if file_path:
             self.videopath_input.setText(file_path)
 
-    def slice_h264(self, input_file, out_dir, step):
+    def update_staged_sampling_controls(self, enabled):
+        self.stable_frames_label.setEnabled(enabled)
+        self.stable_frames_input.setEnabled(enabled)
+
+    @staticmethod
+    def build_staged_frame_indices(total_frames, step, requested_stable_frames):
+        """Build sparse-random / continuous / sparse-random frame indices."""
+        if total_frames <= 0:
+            return set()
+        if step <= 0:
+            raise ValueError("step must be greater than 0")
+
+        stable_count = min(total_frames // 3, requested_stable_frames)
+        remaining = total_frames - stable_count
+        leading_count = remaining // 2
+        stable_start = leading_count
+        stable_end = stable_start + stable_count
+
+        indices = set(range(stable_start, stable_end))
+        rng = random.SystemRandom()
+
+        # Each fixed-size window contributes one random frame.  The window
+        # starts (0, step, 2*step, ...) remain fixed, avoiding repeated actions.
+        for region_start, region_end in (
+            (0, stable_start),
+            (stable_end, total_frames),
+        ):
+            window_start = region_start
+            while window_start < region_end:
+                window_size = min(step, region_end - window_start)
+                indices.add(window_start + rng.randrange(window_size))
+                window_start += step
+        return indices
+
+    def slice_h264(
+        self, input_file, out_dir, step, staged_sampling=False, stable_frames=100
+    ):
         def save_frame(frame, count):
             video_name = os.path.splitext(os.path.basename(input_file))[0]
             file_name = '{}_{:d}.jpg'.format(video_name, count)
@@ -120,6 +178,20 @@ class Video_slice_Dialog(QtWidgets.QDialog):
 
         try:
             cap = cv2.VideoCapture(input_file)
+            if not cap.isOpened():
+                return "ERROR: unable to open video"
+            selected_indices = None
+            if staged_sampling:
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if total_frames <= 0:
+                    total_frames = 0
+                    while cap.grab():
+                        total_frames += 1
+                    cap.release()
+                    cap = cv2.VideoCapture(input_file)
+                selected_indices = self.build_staged_frame_indices(
+                    total_frames, int(step), stable_frames
+                )
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 count = 0
                 frame_number = 0
@@ -127,7 +199,12 @@ class Video_slice_Dialog(QtWidgets.QDialog):
                 while cap.isOpened():
                     ret, frame = cap.read()
                     if ret:
-                        if frame_number % int(step) == 0:
+                        should_save = (
+                            frame_number in selected_indices
+                            if selected_indices is not None
+                            else frame_number % int(step) == 0
+                        )
+                        if should_save:
                             futures.append(executor.submit(save_frame, frame, count))
                             count += 1
                         frame_number += 1
@@ -136,10 +213,13 @@ class Video_slice_Dialog(QtWidgets.QDialog):
                 concurrent.futures.wait(futures)
             cap.release()
             return "DONE"
-        except:
-            return "ERROR"
+        except Exception as e:
+            return f"ERROR: {e}"
 
-    def slice_h265(self, input_file, videopath_input, out_dir, step):
+    def slice_h265(
+        self, input_file, videopath_input, out_dir, step,
+        staged_sampling=False, stable_frames=100
+    ):
         def save_frame(frame, count):
             video_name = os.path.splitext(os.path.basename(input_file))[0]
             file_name = '{}_{:d}.jpg'.format(video_name, count)
@@ -152,43 +232,103 @@ class Video_slice_Dialog(QtWidgets.QDialog):
             file_path = os.path.join(out_dir, file_name)
             frame.to_image().save(file_path)
 
+        def get_video_stream(container):
+            """Return the first video stream, or None for audio/invalid files."""
+            video_streams = container.streams.video
+            return video_streams[0] if video_streams else None
+
+        def selected_for_container(container, stream):
+            if not staged_sampling:
+                return None, container, stream
+            total_frames = stream.frames
+            if not total_frames:
+                total_frames = sum(1 for _ in container.decode(stream))
+                container.close()
+                container = av.open(input_file_for_selection)
+                stream = get_video_stream(container)
+                if stream is None:
+                    raise ValueError("no video stream found after reopening input")
+            selected = self.build_staged_frame_indices(
+                int(total_frames), int(step), stable_frames
+            )
+            return selected, container, stream
+
         if os.path.isfile(input_file):
-            container = av.open(input_file)
-            stream = container.streams.video[0]
+            input_file_for_selection = input_file
             try:
+                container = av.open(input_file)
+                stream = get_video_stream(container)
+                if stream is None:
+                    container.close()
+                    return "ERROR: no video stream found in input file"
+                selected_indices, container, stream = selected_for_container(
+                    container, stream
+                )
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     count = 0
                     frame_number = 0
                     futures = []
                     for frame in container.decode(stream):
-                        count += 1
-                        if frame_number % int(step) == 0:
+                        should_save = (
+                            frame_number in selected_indices
+                            if selected_indices is not None
+                            else frame_number % int(step) == 0
+                        )
+                        if should_save:
                             futures.append(executor.submit(save_frame, frame, count))
+                            count += 1
                         frame_number += 1
                     concurrent.futures.wait(futures)
+                container.close()
                 return "DONE"
-            except:
-                return "ERROR"
+            except Exception as e:
+                if "container" in locals():
+                    container.close()
+                return f"ERROR: {e}"
         if os.path.isdir(videopath_input):
             video_exts = (".mp4", ".avi", ".mov", ".mkv", ".flv", ".h265", ".H265")
             for file in os.listdir(videopath_input):
                 if file.endswith(video_exts):
                     input_path = os.path.join(videopath_input, file)
-                    container = av.open(input_path)
-                    stream = container.streams.video[0]
                     try:
+                        container = av.open(input_path)
+                        stream = get_video_stream(container)
+                        if stream is None:
+                            container.close()
+                            continue
+                        input_file_for_selection = input_path
+                        selected_indices, container, stream = selected_for_container(
+                            container, stream
+                        )
                         with concurrent.futures.ThreadPoolExecutor() as executor:
                             count = 0
                             frame_number = 0
                             futures = []
                             for frame in container.decode(stream):
-                                count += 1
-                                if frame_number % int(step) == 0:
-                                    futures.append(executor.submit(batch_save_frame, input_path, frame, count))
+                                should_save = (
+                                    frame_number in selected_indices
+                                    if selected_indices is not None
+                                    else frame_number % int(step) == 0
+                                )
+                                if should_save:
+                                    futures.append(
+                                        executor.submit(
+                                            batch_save_frame,
+                                            input_path,
+                                            frame,
+                                            count,
+                                        )
+                                    )
+                                    count += 1
                                 frame_number += 1
                             concurrent.futures.wait(futures)
-                    except:
-                        frame_number = 0
+                        container.close()
+                    except Exception as e:
+                        if "container" in locals():
+                            container.close()
+                        # One bad file should not prevent the remaining batch
+                        # from being processed.
+                        continue
 
             return "DONE"
 
@@ -220,12 +360,25 @@ class Video_slice_Dialog(QtWidgets.QDialog):
         value_data = [value_input.text() for value_input in self.value_inputs]
         type_data = self.type_combobox.currentText()
         output_dir = self.image_output.text()
+        try:
+            step = int(value_data[0])
+            if step <= 0:
+                raise ValueError
+        except ValueError:
+            self.result_text_edit.setText("ERROR: step must be a positive integer")
+            return
+        staged_sampling = self.staged_sampling_checkbox.isChecked()
+        stable_frames = self.stable_frames_input.value()
         if type_data == 'H264':
-            result = self.slice_h264(self.video_input.text(), self.videopath_input.text(), self.image_output.text(),
-                                     value_data[0])
+            result = self.slice_h264(
+                self.video_input.text(), output_dir, step,
+                staged_sampling, stable_frames
+            )
         elif type_data == 'H265':
-            result = self.slice_h265(self.video_input.text(), self.videopath_input.text(), self.image_output.text(),
-                                     value_data[0])
+            result = self.slice_h265(
+                self.video_input.text(), self.videopath_input.text(), output_dir,
+                step, staged_sampling, stable_frames
+            )
         if self.merge_checkbox.isChecked() and result == "DONE":
             video_output_path = os.path.join(output_dir, "merged_output.mp4")
             merge_result = self.merge_images_to_video(output_dir, video_output_path)
