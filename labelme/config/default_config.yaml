@@ -166,6 +166,7 @@ shortcuts:
   undo_last_point: Ctrl+Z
   #编辑标签
   edit_label: Ctrl+E
+  set_category: L
 
   add_point_to_edge: Ctrl+Shift+P
   toggle_keep_prev_mode: Ctrl+P

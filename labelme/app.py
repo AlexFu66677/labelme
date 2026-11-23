@@ -133,6 +133,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Whether we need to save or not.
         self.dirty = False
+        # Category selected by the user is inherited by subsequently opened images.
+        self._category_override = None
+        self._advanced_auto_apply = False
+        self._advanced_code = None
+        self._advanced_instances = {}
+        self._advanced_dialog = None
         self.annotation_format = "json"
         self.annotation_path = None
 
@@ -393,6 +399,22 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["data_augmentation"],
             "data_augmentation",
             self.tr("数据增强"),
+        )
+        set_category = action(
+            self.tr("&高级配置"),
+            self.advanced_config,
+            None,
+            "labels",
+            self.tr("使用 Python 代码修改当前图像和标注"),
+            enabled=False,
+        )
+        apply_category = action(
+            self.tr("应用固定类别"),
+            self.apply_category,
+            shortcuts.get("set_category") or "L",
+            "labels",
+            self.tr("将当前图像所有标注改为已设置的固定类别"),
+            enabled=False,
         )
         copy_paste_augmentation = action(
             self.tr("&复制粘贴增强"),
@@ -875,6 +897,8 @@ class MainWindow(QtWidgets.QMainWindow):
             concat_dataset=concat_dataset,
             yolovis=yolovis,
             video_slice=video_slice,
+            set_category=set_category,
+            apply_category=apply_category,
             close=close,
             deleteFile=deleteFile,
             confirmDelete=confirmDelete,
@@ -925,6 +949,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 removePoint,
                 None,
                 toggle_keep_prev_mode,
+                None,
+                set_category,
+                apply_category,
             ),
             # menu shown at right click
             menu=(
@@ -963,6 +990,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 batch_process,
                 tracking_prediction,
                 target_segmentation,
+                set_category,
             ),
             onShapesPresent=(saveAs, hideAll, showAll, toggleAll),
         )
@@ -1514,6 +1542,7 @@ class MainWindow(QtWidgets.QMainWindow):
             yolovis,
             video_slice,
             data_augmentation,
+            set_category,
             # copy_paste_augmentation,
             None,
             # image_pass,
@@ -2480,10 +2509,10 @@ class MainWindow(QtWidgets.QMainWindow):
         position MUST be in global coordinates.
         """
         if (
-            self.sam3_annotation_active
-            and self.canvas.createMode == "rectangle"
-            and self.canvas.shapes
-            and self.canvas.shapes[-1].shape_type == "rectangle"
+                self.sam3_annotation_active
+                and self.canvas.createMode == "rectangle"
+                and self.canvas.shapes
+                and self.canvas.shapes[-1].shape_type == "rectangle"
         ):
             prompt_shape = self.canvas.shapes[-1]
             prompt_box = self._get_prompt_box_from_shape(prompt_shape)
@@ -2713,7 +2742,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.errorMessage(self.tr("Error opening YOLO label file"), str(e))
                 return False
         total_files = len(self.imageList)  # 总标注数量
-        if len(self.imageList)!=0:
+        if len(self.imageList) != 0:
             current_index = self.imageList.index(filename) + 1  # 当前标注索引 (从1开始)
             self.annotationInfo.setText(f"Current: {current_index} | Total: {total_files} ")
         if self._config["keep_prev"]:
@@ -2732,6 +2761,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setDirty()
         else:
             self.setClean()
+        if self._advanced_auto_apply and self._advanced_code and len(self.labelList):
+            try:
+                self._execute_advanced_code(self._advanced_code)
+            except Exception as exc:
+                logger.error("自动应用高级配置失败: %s", exc)
         self.canvas.setEnabled(True)
         self.actions.rotate.setEnabled(False)
         self.actions.select_onnx.setEnabled(True)
@@ -2982,7 +3016,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _updateSam3PanelState(self, _value=None):
         if not hasattr(self, "sam3_run_button"):
             return
-        self.sam3_run_button.setEnabled(bool(getattr(self, "sam3_model_file", None)) and not self.ai_annotation_is_running)
+        self.sam3_run_button.setEnabled(
+            bool(getattr(self, "sam3_model_file", None)) and not self.ai_annotation_is_running)
         if hasattr(self, "sam3_pause_button"):
             self.sam3_pause_button.setEnabled(self.sam3_annotation_active and not self.ai_annotation_is_running)
 
@@ -3019,9 +3054,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _runObjectDetectionShortcut(self):
         if (
-            self.object_detection_window.isVisible()
-            and getattr(self, "net", None) is not None
-            and self.object_detection_run_button.isEnabled()
+                self.object_detection_window.isVisible()
+                and getattr(self, "net", None) is not None
+                and self.object_detection_run_button.isEnabled()
         ):
             self.object_detection_run_button.click()
 
@@ -3130,8 +3165,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         model_path = self._targetSegmentationModel(options["strategy"])
         if (
-            self.target_segmentation_inference.text_model_path != model_path
-            or self.target_segmentation_inference.text_strategy != options["strategy"]
+                self.target_segmentation_inference.text_model_path != model_path
+                or self.target_segmentation_inference.text_strategy != options["strategy"]
         ):
             self.target_segmentation_inference.set_text_model(
                 model_path, options["strategy"]
@@ -3338,8 +3373,8 @@ class MainWindow(QtWidgets.QMainWindow):
             raise ValueError("Tracking algorithm requires a name and callable runner")
         self.tracking_algorithms[name] = runner
         if (
-            self.tracking_algorithm_combo.count() == 1
-            and self.tracking_algorithm_combo.itemData(0) is None
+                self.tracking_algorithm_combo.count() == 1
+                and self.tracking_algorithm_combo.itemData(0) is None
         ):
             self.tracking_algorithm_combo.clear()
         existing = self.tracking_algorithm_combo.findData(name)
@@ -3347,7 +3382,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tracking_algorithm_combo.addItem(name, name)
 
     def _runTemplateMatching(
-        self, previous_image, current_image, previous_boxes
+            self, previous_image, current_image, previous_boxes
     ):
         return track_boxes_template_matching(
             previous_image,
@@ -3359,13 +3394,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _updateTrackingParameterState(self, _index=None):
         enabled = (
-            self.tracking_algorithm_combo.currentData() == self.tr("模板匹配")
+                self.tracking_algorithm_combo.currentData() == self.tr("模板匹配")
         )
         for widget in (
-            self.template_match_threshold_label,
-            self.template_match_threshold,
-            self.template_nms_threshold_label,
-            self.template_nms_threshold,
+                self.template_match_threshold_label,
+                self.template_match_threshold,
+                self.template_nms_threshold_label,
+                self.template_nms_threshold,
         ):
             widget.setEnabled(enabled)
 
@@ -3451,9 +3486,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.labelFile is not None:
             self.pre_shape = self.labelFile.shapes
         if self.save_AI_Labels(
-            label_file,
-            predicted_boxes,
-            keep_existing=self.tracking_keep_existing.isChecked(),
+                label_file,
+                predicted_boxes,
+                keep_existing=self.tracking_keep_existing.isChecked(),
         ):
             self.loadFile(self.filename)
             self.status(self.tr("跟踪预测完成，已保存当前帧标注。"))
@@ -3583,10 +3618,10 @@ class MainWindow(QtWidgets.QMainWindow):
         min_corner = warped_corners.min(axis=0)
         max_corner = warped_corners.max(axis=0)
         if (
-            max_corner[0] < 0
-            or max_corner[1] < 0
-            or min_corner[0] >= image_width
-            or min_corner[1] >= image_height
+                max_corner[0] < 0
+                or max_corner[1] < 0
+                or min_corner[0] >= image_width
+                or min_corner[1] >= image_height
         ):
             return None
 
@@ -3752,7 +3787,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.tr("SAM3 文本提示模型要求图像尺寸为方形，请将宽和高设置为相同值。"),
                 )
                 return
-            
+
             detections = self.sam3_inference.run_text_prompt(
                 image=image,
                 prompts=prompts,
@@ -3835,6 +3870,217 @@ class MainWindow(QtWidgets.QMainWindow):
     def dataset_analysis(self, _value=False):
         dialog = Dataset_analysis_Dialog()
         dialog.exec_()
+
+    def advanced_config(self, _value=False):
+        """Open a small Python editor for custom per-image annotation edits."""
+        if self.filename is None or not self.imageData:
+            self.errorMessage(self.tr("高级配置"), self.tr("请先打开图像"))
+            return
+        if self._advanced_dialog is not None:
+            try:
+                if self._advanced_dialog.isVisible():
+                    self._advanced_dialog.raise_()
+                    self._advanced_dialog.activateWindow()
+                    return
+            except RuntimeError:
+                # The Qt object was deleted after closing; create a new dialog.
+                self._advanced_dialog = None
+        dialog = QtWidgets.QDialog(self)
+        self._advanced_dialog = dialog
+        dialog.setModal(False)
+        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda *_: setattr(self, "_advanced_dialog", None))
+        dialog.setWindowTitle(self.tr("高级配置 - Python 标注处理"))
+        dialog.resize(760, 520)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(QtWidgets.QLabel(
+            self.tr("可用变量：image（PIL 图像）、shapes（当前标注列表）、np。直接修改 shape.label/points 等属性。")
+        ))
+        presets = {
+            "按面积设置类别": "for shape in shapes:\n    pts = [(float(p.x()), float(p.y())) for p in shape.points]\n    area = abs((max(x for x, y in pts)-min(x for x, y in pts)) * (max(y for x, y in pts)-min(y for x, y in pts))) if len(pts) >= 2 else 0\n    if area < 100:\n        shape.label = '5'",
+            "所有目标统一类别": "for shape in shapes:\n    shape.label = '5'",
+            "扩展检测框 5 像素": "for shape in shapes:\n    if len(shape.points) >= 2:\n        x1, y1 = shape.points[0].x(), shape.points[0].y()\n        x2, y2 = shape.points[1].x(), shape.points[1].y()\n        shape.points = [[x1-5, y1-5], [x2+5, y2+5]]",
+            "Mask/阈值示例": "# threshold: maximum difference from the brightest grayscale pixel\nthreshold = 20\npadding = 10\nif threshold < 0:\n    raise ValueError(\"threshold must be non-negative\")\ngray = np.asarray(image.convert(\"L\"), dtype=np.float64)\nheight, width = gray.shape\nfor shape in shapes:\n    if shape.shape_type != \"rectangle\" or len(shape.points) < 2:\n        continue\n    xs = [float(p.x()) for p in shape.points]\n    ys = [float(p.y()) for p in shape.points]\n    left = max(0, int(np.floor(min(xs))) - padding)\n    top = max(0, int(np.floor(min(ys))) - padding)\n    right = min(width, int(np.ceil(max(xs))) + padding)\n    bottom = min(height, int(np.ceil(max(ys))) + padding)\n    region = gray[top:bottom, left:right]\n    if region.size == 0:\n        continue\n    mask = region.max() - region <= threshold\n    yy, xx = np.nonzero(mask)\n    if xx.size:\n        shape.points = [\n            QtCore.QPointF(float(left + xx.min()), float(top + yy.min())),\n            QtCore.QPointF(float(left + xx.max() + 1), float(top + yy.max() + 1)),\n        ]",
+        }
+        instance_row = QtWidgets.QHBoxLayout()
+        instance_combo = QtWidgets.QComboBox(dialog)
+        instance_combo.addItems(list(presets))
+        new_instance = QtWidgets.QPushButton(self.tr("新建空白实例"), dialog)
+        save_instance = QtWidgets.QPushButton(self.tr("保存实例"), dialog)
+        auto_apply = QtWidgets.QCheckBox(self.tr("打开图像时自动应用"), dialog)
+        instance_row.addWidget(QtWidgets.QLabel(self.tr("实例:")))
+        instance_row.addWidget(instance_combo, 1)
+        instance_row.addWidget(new_instance)
+        instance_row.addWidget(save_instance)
+        instance_row.addWidget(auto_apply)
+        layout.addLayout(instance_row)
+        editor = QtWidgets.QPlainTextEdit(dialog)
+        editor.setPlainText(presets[instance_combo.currentText()])
+        new_instance.clicked.connect(lambda: self._create_blank_advanced_instance(instance_combo, editor))
+        instance_combo.currentTextChanged.connect(lambda name: editor.setPlainText(
+            self._advanced_instances.get(name, presets.get(name, ""))))
+        save_instance.clicked.connect(lambda: self._save_advanced_instance(
+            dialog, instance_combo, editor, auto_apply))
+        auto_apply.toggled.connect(lambda checked: self._set_advanced_auto_apply(
+            checked, editor))
+
+        # Keep the full example available when no preset is selected.
+        editor.setToolTip(self.tr("代码将在当前进程中执行，请仅运行可信代码"))
+        """editor.setPlainText(
+            "# image: 当前帧 PIL.Image；shapes: 当前帧标注对象列表\n"
+            "# 示例：将面积小于 100 的标注类别设置为 5\n"
+            "for shape in shapes:\n"
+            "    points = [(float(p.x()), float(p.y())) for p in shape.points]\n"
+            "    if len(points) >= 2:\n"
+            "        area = abs((max(x for x, y in points) - min(x for x, y in points)) *\n"
+            "                   (max(y for x, y in points) - min(y for x, y in points)))\n"
+            "        if area < 100:\n"
+            "            shape.label = '5'\n"
+        )"""
+        layout.addWidget(editor, 1)
+        buttons = QtWidgets.QHBoxLayout()
+        run_button = QtWidgets.QPushButton(self.tr("运行"), dialog)
+        close_button = QtWidgets.QPushButton(self.tr("关闭"), dialog)
+        buttons.addWidget(run_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        def run_code():
+            self.setEnabled(False)
+            try:
+                code = editor.toPlainText()
+                self._execute_advanced_code(code)
+                if auto_apply.isChecked():
+                    self._advanced_code = code
+                    self._advanced_auto_apply = True
+                self.status(self.tr("高级配置运行完成"))
+            except Exception as exc:
+                QtWidgets.QMessageBox.critical(dialog, self.tr("运行失败"), str(exc))
+            finally:
+                self.setEnabled(True)
+                dialog.setEnabled(True)
+
+        run_button.clicked.connect(run_code)
+        QtWidgets.QShortcut(QtGui.QKeySequence("L"), dialog).activated.connect(run_code)
+        close_button.clicked.connect(dialog.accept)
+        dialog.show()
+
+    def _save_advanced_instance(self, dialog, combo, editor, auto_apply):
+        name, ok = QtWidgets.QInputDialog.getText(dialog, self.tr("保存实例"), self.tr("实例名称："))
+        name = str(name).strip()
+        if not ok or not name:
+            return
+        self._advanced_instances[name] = editor.toPlainText()
+        if combo.findText(name) < 0:
+            combo.addItem(name)
+        combo.setCurrentText(name)
+        if auto_apply.isChecked():
+            self._advanced_code = editor.toPlainText()
+            self._advanced_auto_apply = True
+
+    def _create_blank_advanced_instance(self, combo, editor):
+        name = self.tr("空白实例")
+        suffix = 1
+        while combo.findText(name) >= 0:
+            suffix += 1
+            name = self.tr("空白实例 {}").format(suffix)
+        combo.addItem(name)
+        combo.setCurrentText(name)
+        editor.setPlainText("")
+
+    def _set_advanced_auto_apply(self, checked, editor):
+        self._advanced_auto_apply = bool(checked)
+        self._advanced_code = editor.toPlainText() if checked else None
+
+    def _execute_advanced_code(self, code):
+        image = utils.img_data_to_pil(self.imageData)
+        shapes = [item.shape() for item in self.labelList]
+        exec(code, {"__builtins__": __builtins__, "image": image,
+                    "shapes": shapes, "np": __import__("numpy"), "QtCore": QtCore})
+        items = list(self.labelList)
+        for item in items:
+            shape = item.shape()
+            if shape.points and isinstance(shape.points[0], (list, tuple)):
+                shape.points = [QtCore.QPointF(float(p[0]), float(p[1])) for p in shape.points]
+            shape.label = str(shape.label)
+        # Normalize all boxes before updates trigger repaint or autosave.
+        for item in items:
+            self._update_item(item, item.shape().label, None, None, None)
+        self.canvas.update()
+        self.setDirty()
+
+    def set_category(self, _value=False):
+        """Set every annotation in the current image to one category."""
+        if self.filename is None or not len(self.labelList):
+            self.errorMessage(self.tr("设置类别"), self.tr("当前图像没有可修改的标注"))
+            return
+
+        # Use configured labels as suggestions, while allowing a new label.
+        labels = [str(label) for label in (self._config.get("labels") or [])]
+        labels.extend(
+            item.shape().label for item in self.labelList if item.shape().label not in labels
+        )
+        category, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            self.tr("设置类别"),
+            self.tr("将当前图像所有标注设置为："),
+            labels,
+            0,
+            True,
+        )
+        category = str(category).strip()
+        if not ok or not category:
+            return
+
+        configured_id = None
+        if category in (self._config.get("labels") or []):
+            configured_id = list(self._config["labels"]).index(category)
+        if self.annotation_format == "txt" and configured_id is None:
+            try:
+                configured_id = int(category)
+            except ValueError:
+                self.errorMessage(
+                    self.tr("设置类别"),
+                    self.tr("YOLO TXT 需要在配置 labels 中定义该类别，或输入数字类别 ID。"),
+                )
+                return
+        self._category_override = category
+        # Apply immediately to the current image as confirmation that the
+        # category was accepted; later images require the shortcut explicitly.
+        if len(self.labelList):
+            self._apply_category_override(category, configured_id)
+
+    def apply_category(self, _value=False):
+        """Apply the previously selected fixed category to this image."""
+        if not self._category_override:
+            self.errorMessage(self.tr("应用固定类别"), self.tr("请先设置固定类别"))
+            return
+        if not len(self.labelList):
+            self.errorMessage(self.tr("应用固定类别"), self.tr("当前图像没有可修改的标注"))
+            return
+        self._apply_category_override(self._category_override)
+
+    def _apply_category_override(self, category, configured_id=None):
+        """Apply the inherited category to all current shapes."""
+        if configured_id is None and category in (self._config.get("labels") or []):
+            configured_id = list(self._config["labels"]).index(category)
+        if self.annotation_format == "txt" and configured_id is None:
+            try:
+                configured_id = int(category)
+            except (TypeError, ValueError):
+                return
+        for item in list(self.labelList):
+            shape = item.shape()
+            self._update_item(item, category, None, None, None)
+            # A stale YOLO class id would otherwise override the changed text
+            # when saving TXT annotations.
+            if self.annotation_format == "txt":
+                if configured_id is None:
+                    shape.other_data.pop("yolo_class_id", None)
+                else:
+                    shape.other_data["yolo_class_id"] = configured_id
+        self.canvas.update()
 
     def Yolovis(self, _value=False):
         dialog = Yolo_Vis_Dialog()
@@ -4128,6 +4374,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.actions.saveAs.setEnabled(False)
 
     def getLabelFile(self):
+        if self.annotation_path:
+            return self.annotation_path
         if self.annotation_format == "txt":
             return self._currentAnnotationFile()
         if self.filename.lower().endswith(".json"):
@@ -4138,33 +4386,32 @@ class MainWindow(QtWidgets.QMainWindow):
         return label_file
 
     def deleteFile(self):
-        mb = QtWidgets.QMessageBox
-        # msg = self.tr(
-        #     "You are about to permanently delete this label file, " "proceed anyway?"
-        # )
-        # answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
-        # if answer != mb.Yes:
-        #     return
+        if self.filename is None:
+            return
 
         label_file = self.getLabelFile()
-        if osp.exists(label_file):
+        if not osp.exists(label_file):
+            return
+        try:
             os.remove(label_file)
-            logger.info("Label file is removed: {}".format(label_file))
+        except OSError as e:
+            self.errorMessage(self.tr("Error deleting annotation file"), str(e))
+            return
+        logger.info("Label file is removed: %s", label_file)
 
-            item = self.fileListWidget.currentItem()
-            item.setCheckState(Qt.Unchecked)
-            self.labelList.clear()
-            # self.filename = None
-            self.imagePath = None
-            self.imageData = None
-            self.labelFile = None
-            self.otherData = None
-            self.tmpimageData = None
-            self.rotatevalue = None
-            self.imagePass = None
-            self.QCResult.setText(None)
-            self.canvas.resetState()
-            # self.resetState()
+        filename = self.filename
+        images = self.imageList
+        if filename in images:
+            row = images.index(filename)
+            self.fileListWidget.item(row).setCheckState(Qt.Unchecked)
+            if row + 1 < len(images):
+                filename = images[row + 1]
+
+        self.setClean()
+        if filename == label_file:
+            self.closeFile()
+        else:
+            self.loadFile(filename)
 
     # Message Dialogs. #
     def hasLabels(self):
@@ -4254,7 +4501,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.batch_processing_enabled:
             for old_shape, new_shape in zip(self.canvas.selectedShapes, self.canvas.selectedShapesCopy):
                 if old_shape.points and new_shape.points:
-                    moves.append((old_shape.copy(), new_shape.points[0].x() - old_shape.points[0].x(), new_shape.points[0].y() - old_shape.points[0].y()))
+                    moves.append((old_shape.copy(), new_shape.points[0].x() - old_shape.points[0].x(),
+                                  new_shape.points[0].y() - old_shape.points[0].y()))
         self.canvas.endMove(copy=False)
         self.setDirty()
         self._batchMoveShapes(moves)
@@ -4306,7 +4554,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _batchLabelFilename(self, image_filename):
         basename = osp.splitext(osp.basename(image_filename))[0] + LabelFile.suffix
-        return osp.join(self.output_dir, basename) if self.output_dir else osp.splitext(image_filename)[0] + LabelFile.suffix
+        return osp.join(self.output_dir, basename) if self.output_dir else osp.splitext(image_filename)[
+                                                                               0] + LabelFile.suffix
 
     def _shapeToData(self, shape):
         data = shape.other_data.copy()
@@ -4373,10 +4622,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _batchDeleteOverlappingShapes(self, source_shapes):
         def delete(target):
-            retained = [shape for shape in target if not any(self._batchOverlaps(shape, source) for source in source_shapes)]
+            retained = [shape for shape in target if
+                        not any(self._batchOverlaps(shape, source) for source in source_shapes)]
             changed = len(retained) != len(target)
             target[:] = retained
             return changed
+
         self._applyToBatchLabels(delete)
 
     def batchMoveSelectedShapes(self):
@@ -4400,6 +4651,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _batchMoveShapes(self, moves):
         if not moves:
             return
+
         def move(target):
             changed = False
             for target_shape in target:
@@ -4409,6 +4661,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         changed = True
                         break
             return changed
+
         self._applyToBatchLabels(move)
 
     def openDirDialog(self, _value=False, dirpath=None):
@@ -4489,8 +4742,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fileListWidget.addFile(
             filename,
             checked=(
-                QtCore.QFile.exists(label_file)
-                and (label_file.lower().endswith(".txt") or LabelFile.is_label_file(label_file))
+                    QtCore.QFile.exists(label_file)
+                    and (label_file.lower().endswith(".txt") or LabelFile.is_label_file(label_file))
             ),
         )
 

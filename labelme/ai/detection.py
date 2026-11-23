@@ -97,8 +97,8 @@ def nms(pred, conf_thres, iou_thres):
     cls_conf = box[..., 5:]
     cls = []
     for i in range(len(cls_conf)):
-        # cls.append(int(np.argmax(cls_conf[i])))
-        cls.append(2)
+        cls.append(int(np.argmax(cls_conf[i])))
+        # cls.append(1)
     total_cls = list(set(cls))
     output_box = []
     for i in range(len(total_cls)):
