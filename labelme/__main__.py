@@ -165,6 +165,9 @@ def main():
         QtCore.QLocale.system().name(),
         osp.join(here, "./translate")
     )
+    os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = QtCore.QLibraryInfo.location(
+        QtCore.QLibraryInfo.PluginsPath
+    )
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName(__appname__)
     app.setWindowIcon(newIcon("icon"))

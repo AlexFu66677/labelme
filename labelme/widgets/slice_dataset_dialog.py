@@ -1,6 +1,6 @@
 from qtpy import QtWidgets, QtCore
 from .. import dataset
-from sahi.scripts.slice_coco import slice
+from sahi.scripts.slice_coco import slicer
 import cv2
 from pathlib import Path
 import numpy as np
@@ -296,9 +296,9 @@ class Slice_dataset(QtWidgets.QDialog):
 
         if type_data == 'coco':
             try:
-                result = slice(folder_data[0], self.json_input.text(), int(value_data[0]), float(value_data[1]), True,
-                               folder_data[1])
-                self.result_text_edit.setText(result)
+                slicer(folder_data[0], self.json_input.text(), int(value_data[0]), float(value_data[1]), True,
+                       folder_data[1])
+                self.result_text_edit.setText("Done")
             except Exception as e:
                 self.result_text_edit.setText(f"An error occurred: {str(e)}")
         elif type_data == 'yolo':
